@@ -225,6 +225,150 @@ fn get_module_name(
     file.to_str().map(String::from)
 }
 
+/// Before translate is called, exporter gens deps info
+/// clap::App::get_matches().
+pub fn exporter(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
+    diagnostics::init(tcfg.enabled_warnings.clone(), tcfg.log_level);
+
+    let lcmds = get_compile_commands(cc_db, &tcfg.filter).unwrap_or_else(|_| {
+        panic!(
+            "Could not parse compile commands from {}",
+            cc_db.to_string_lossy()
+        )
+    });
+
+    // Specify path to system include dir on macOS 10.14 and later. Disable the blocks extension.
+    let clang_args: Vec<String> = get_extra_args_macos();
+    let mut clang_args: Vec<&str> = clang_args.iter().map(AsRef::as_ref).collect();
+    clang_args.extend_from_slice(extra_clang_args);
+
+    let mut top_level_ccfg = None;
+    let mut workspace_members = vec![];
+    let mut num_transpiled_files = 0;
+    let mut transpiled_modules = Vec::new();
+    let build_dir = get_build_dir(&tcfg, cc_db);
+    for lcmd in &lcmds {
+        let cmds = &lcmd.cmd_inputs;
+        let lcmd_name = lcmd
+            .output
+            .as_ref()
+            .map(|output| {
+                let output_path = Path::new(output);
+                output_path
+                    .file_stem()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .unwrap_or_else(|| tcfg.crate_name());
+        let build_dir = if lcmd.top_level {
+            build_dir.to_path_buf()
+        } else {
+            build_dir.join(&lcmd_name)
+        };
+
+        // Compute the common ancestor of all input files
+        // FIXME: this is quadratic-time in the length of the ancestor path
+        let mut ancestor_path = cmds
+            .first()
+            .map(|cmd| {
+                let mut dir = cmd.abs_file();
+                dir.pop(); // discard the file part
+                dir
+            })
+            .unwrap_or_else(PathBuf::new);
+        if cmds.len() > 1 {
+            for cmd in &cmds[1..] {
+                let cmd_path = cmd.abs_file();
+                ancestor_path = ancestor_path
+                    .ancestors()
+                    .find(|a| cmd_path.starts_with(a))
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_else(PathBuf::new);
+            }
+        }
+
+        let results = cmds
+            .iter()
+            .map(|cmd| {
+                export_single(
+                    &tcfg,
+                    cmd.abs_file(),
+                    &ancestor_path,
+                    &build_dir,
+                    cc_db,
+                    &clang_args,
+                )
+            })
+            .collect::<Vec<TranspileResult>>();
+        let mut modules = vec![];
+        let mut modules_skipped = false;
+        let mut pragmas = PragmaSet::new();
+        let mut crates = CrateSet::new();
+        for res in results {
+            match res {
+                Ok((module, pragma_vec, crate_set)) => {
+                    modules.push(module);
+                    crates.extend(crate_set);
+
+                    num_transpiled_files += 1;
+                    for (key, vals) in pragma_vec {
+                        for val in vals {
+                            pragmas.insert((key, val));
+                        }
+                    }
+                }
+                Err(_) => {
+                    modules_skipped = true;
+                }
+            }
+        }
+        pragmas.sort();
+        crates.sort();
+
+        transpiled_modules.extend(modules.iter().cloned());
+
+        if tcfg.emit_build_files {
+            if modules_skipped {
+                // If we skipped a file, we may not have collected all required pragmas
+                warn!("Can't emit build files after incremental transpiler run; skipped.");
+                return;
+            }
+
+            let ccfg = CrateConfig {
+                crate_name: lcmd_name.clone(),
+                modules,
+                pragmas,
+                crates,
+                link_cmd: lcmd,
+            };
+            if lcmd.top_level {
+                top_level_ccfg = Some(ccfg);
+            } else {
+                let crate_file = emit_build_files(&tcfg, &build_dir, Some(ccfg), None);
+                reorganize_definitions(&tcfg, &build_dir, crate_file)
+                    .unwrap_or_else(|e| warn!("Reorganizing definitions failed: {}", e));
+                workspace_members.push(lcmd_name);
+            }
+        }
+    }
+
+    if num_transpiled_files == 0 {
+        warn!("No C files found in compile_commands.json; nothing to do.");
+        return;
+    }
+
+    if tcfg.emit_build_files {
+        let crate_file =
+            emit_build_files(&tcfg, &build_dir, top_level_ccfg, Some(workspace_members));
+        reorganize_definitions(&tcfg, &build_dir, crate_file)
+            .unwrap_or_else(|e| warn!("Reorganizing definitions failed: {}", e));
+    }
+
+    tcfg.check_if_all_binaries_used(&transpiled_modules);
+}
+
 /// Main entry point to transpiler. Called from CLI tools with the result of
 /// clap::App::get_matches().
 pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
@@ -425,6 +569,184 @@ fn reorganize_definitions(
         warn!("cargo fmt failed, code may not be well-formatted");
     }
     Ok(())
+}
+
+fn export_single(
+    tcfg: &TranspilerConfig,
+    input_path: PathBuf,
+    ancestor_path: &Path,
+    build_dir: &Path,
+    cc_db: &Path,
+    extra_clang_args: &[&str],
+) -> TranspileResult {
+    let output_path = get_output_path(tcfg, input_path.clone(), ancestor_path, build_dir);
+    if output_path.exists() && !tcfg.overwrite_existing {
+        warn!("Skipping existing file {}", output_path.display());
+        return Err(());
+    }
+
+    let file = input_path.file_name().unwrap().to_str().unwrap();
+    if !input_path.exists() {
+        warn!(
+            "Input C file {} does not exist, skipping!",
+            input_path.display()
+        );
+        return Err(());
+    }
+
+    if tcfg.verbose {
+        println!("Additional Clang arguments: {}", extra_clang_args.join(" "));
+    }
+
+    // Extract the untyped AST from the CBOR file
+    let untyped_context = match ast_exporter::get_untyped_ast(
+        input_path.as_path(),
+        cc_db,
+        extra_clang_args,
+        tcfg.debug_ast_exporter,
+    ) {
+        Err(e) => {
+            warn!(
+                "Error: {}. Skipping {}; is it well-formed C?",
+                e,
+                input_path.display()
+            );
+            return Err(());
+        }
+        Ok(cxt) => cxt,
+    };
+
+    println!("Transpiling {}", file);
+
+    if tcfg.dump_untyped_context {
+        println!("CBOR Clang AST");
+        println!("{:#?}", untyped_context);
+    }
+
+    // Convert this into a typed AST
+    let typed_context = {
+        let conv = ConversionContext::new(&untyped_context);
+        if conv.invalid_clang_ast && tcfg.fail_on_error {
+            panic!("Clang AST was invalid");
+        }
+        conv.typed_context
+    };
+
+    if tcfg.dump_typed_context {
+        println!("Clang AST");
+        println!("{:#?}", typed_context);
+    }
+
+    if tcfg.pretty_typed_context {
+        println!("Pretty-printed Clang AST");
+        println!("{:#?}", Printer::new(io::stdout()).print(&typed_context));
+    }
+
+    for (key, value) in typed_context.iter_decls() {
+        match value.kind {
+            CDeclKind::Function {
+                is_global,
+                is_inline,
+                is_implicit,
+                is_extern,
+                is_inline_externally_visible,
+                typ,
+                name,
+                parameters,
+                body,
+                attrs,
+            } => {
+                if !value.loc.is_none() {
+                    match &typed_context12.files[value.loc.unwrap().fileid as usize].path {
+                        Some(file) => {
+                            println!("File: {}", file.to_str().unwrap());
+                        }
+                        None => {
+                            println!("File: None");
+                        }
+                    };
+                }
+                if is_extern == true {
+                    println!("Extern Function: {}", name);
+                } else {
+                    println!("Functions already defined in the c source file: {}", name)
+                }
+            }
+            CDeclKind::Variable {
+                has_static_duration,
+                has_thread_duration,
+                is_externally_visible,
+                is_defn,
+                ident,
+                initializer,
+                typ,
+                attrs,
+            } => {}
+            CDeclKind::Enum {
+                name,
+                variants,
+                integral_type,
+            } => {}
+            CDeclKind::EnumConstant { name, value } => {}
+            CDeclKind::Typedef {
+                name,
+                typ,
+                is_implicit,
+            } => {}
+            CDeclKind::Struct {
+                name,
+                fields,
+                is_packed,
+                manual_alignment,
+                max_field_alignment,
+                platform_byte_size,
+                platform_alignment,
+            } => {}
+            CDeclKind::Union {
+                name,
+                fields,
+                is_packed,
+            } => {}
+            CDeclKind::Field {
+                name,
+                typ,
+                bitfield_width,
+                platform_bit_offset,
+                platform_type_bitwidth,
+            } => {}
+            CDeclKind::MacroObject { name } => {}
+            CDeclKind::MacroFunction { name } => {}
+            CDeclKind::NonCanonicalDecl { canonical_decl } => {}
+            CDeclKind::StaticAssert {
+                assert_expr,
+                message,
+            } => {}
+        }
+    }
+
+    // Perform the translation
+    let (translated_string, pragmas, crates) =
+        translator::translate(typed_context, tcfg, input_path);
+
+    let mut file = match File::create(&output_path) {
+        Ok(file) => file,
+        Err(e) => panic!(
+            "Unable to open file {} for writing: {}",
+            output_path.display(),
+            e
+        ),
+    };
+
+    match file.write_all(translated_string.as_bytes()) {
+        Ok(()) => (),
+        Err(e) => panic!(
+            "Unable to write translation to file {}: {}",
+            output_path.display(),
+            e
+        ),
+    };
+
+    Ok((output_path, pragmas, crates))
 }
 
 fn transpile_single(
