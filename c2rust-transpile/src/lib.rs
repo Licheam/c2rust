@@ -245,7 +245,6 @@ pub fn exporter(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str])
     let mut top_level_ccfg = None;
     let mut workspace_members = vec![];
     let mut num_transpiled_files = 0;
-    let mut transpiled_modules = Vec::new();
     let build_dir = get_build_dir(&tcfg, cc_db);
     for lcmd in &lcmds {
         let cmds = &lcmd.cmd_inputs;
@@ -288,7 +287,6 @@ pub fn exporter(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str])
                     .unwrap_or_else(PathBuf::new);
             }
         }
-
         let results = cmds
             .iter()
             .map(|cmd| {
@@ -301,57 +299,7 @@ pub fn exporter(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str])
                     &clang_args,
                 )
             })
-            .collect::<Vec<TranspileResult>>();
-        let mut modules = vec![];
-        let mut modules_skipped = false;
-        let mut pragmas = PragmaSet::new();
-        let mut crates = CrateSet::new();
-        for res in results {
-            match res {
-                Ok((module, pragma_vec, crate_set)) => {
-                    modules.push(module);
-                    crates.extend(crate_set);
-
-                    num_transpiled_files += 1;
-                    for (key, vals) in pragma_vec {
-                        for val in vals {
-                            pragmas.insert((key, val));
-                        }
-                    }
-                }
-                Err(_) => {
-                    modules_skipped = true;
-                }
-            }
-        }
-        pragmas.sort();
-        crates.sort();
-
-        transpiled_modules.extend(modules.iter().cloned());
-
-        if tcfg.emit_build_files {
-            if modules_skipped {
-                // If we skipped a file, we may not have collected all required pragmas
-                warn!("Can't emit build files after incremental transpiler run; skipped.");
-                return;
-            }
-
-            let ccfg = CrateConfig {
-                crate_name: lcmd_name.clone(),
-                modules,
-                pragmas,
-                crates,
-                link_cmd: lcmd,
-            };
-            if lcmd.top_level {
-                top_level_ccfg = Some(ccfg);
-            } else {
-                let crate_file = emit_build_files(&tcfg, &build_dir, Some(ccfg), None);
-                reorganize_definitions(&tcfg, &build_dir, crate_file)
-                    .unwrap_or_else(|e| warn!("Reorganizing definitions failed: {}", e));
-                workspace_members.push(lcmd_name);
-            }
-        }
+            .collect::<Vec<Result<(), ()>>>();
     }
 
     if num_transpiled_files == 0 {
@@ -365,8 +313,6 @@ pub fn exporter(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str])
         reorganize_definitions(&tcfg, &build_dir, crate_file)
             .unwrap_or_else(|e| warn!("Reorganizing definitions failed: {}", e));
     }
-
-    tcfg.check_if_all_binaries_used(&transpiled_modules);
 }
 
 /// Main entry point to transpiler. Called from CLI tools with the result of
@@ -578,7 +524,8 @@ fn export_single(
     build_dir: &Path,
     cc_db: &Path,
     extra_clang_args: &[&str],
-) -> TranspileResult {
+) -> Result<(), ()> {
+    println!("Exporting {}", input_path.display());
     let output_path = get_output_path(tcfg, input_path.clone(), ancestor_path, build_dir);
     if output_path.exists() && !tcfg.overwrite_existing {
         warn!("Skipping existing file {}", output_path.display());
@@ -643,7 +590,7 @@ fn export_single(
     }
 
     for (key, value) in typed_context.iter_decls() {
-        match value.kind {
+        match &value.kind {
             CDeclKind::Function {
                 is_global,
                 is_inline,
@@ -657,7 +604,7 @@ fn export_single(
                 attrs,
             } => {
                 if !value.loc.is_none() {
-                    match &typed_context12.files[value.loc.unwrap().fileid as usize].path {
+                    match &typed_context.get_file_path(value.loc.unwrap().fileid as usize) {
                         Some(file) => {
                             println!("File: {}", file.to_str().unwrap());
                         }
@@ -666,7 +613,7 @@ fn export_single(
                         }
                     };
                 }
-                if is_extern == true {
+                if *is_extern {
                     println!("Extern Function: {}", name);
                 } else {
                     println!("Functions already defined in the c source file: {}", name)
@@ -724,29 +671,7 @@ fn export_single(
         }
     }
 
-    // Perform the translation
-    let (translated_string, pragmas, crates) =
-        translator::translate(typed_context, tcfg, input_path);
-
-    let mut file = match File::create(&output_path) {
-        Ok(file) => file,
-        Err(e) => panic!(
-            "Unable to open file {} for writing: {}",
-            output_path.display(),
-            e
-        ),
-    };
-
-    match file.write_all(translated_string.as_bytes()) {
-        Ok(()) => (),
-        Err(e) => panic!(
-            "Unable to write translation to file {}: {}",
-            output_path.display(),
-            e
-        ),
-    };
-
-    Ok((output_path, pragmas, crates))
+    Ok(())
 }
 
 fn transpile_single(
