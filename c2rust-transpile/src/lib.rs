@@ -287,7 +287,7 @@ pub fn exporter(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str])
                     .unwrap_or_else(PathBuf::new);
             }
         }
-        let results = cmds
+        let _ = cmds
             .iter()
             .map(|cmd| {
                 export_single(
