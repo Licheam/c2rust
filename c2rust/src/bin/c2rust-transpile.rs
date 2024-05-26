@@ -155,6 +155,9 @@ struct Args {
     /// Fail when the control-flow graph generates branching constructs
     #[clap(long)]
     fail_on_multiple: bool,
+
+    #[clap(long)]
+    dependency_file: Option<PathBuf>,
 }
 
 #[derive(Debug, PartialEq, Eq, ValueEnum, Clone)]
@@ -216,6 +219,7 @@ fn main() {
         emit_no_std: args.emit_no_std,
         enabled_warnings: args.warn.into_iter().collect(),
         log_level: args.log_level,
+        dependency_file: args.dependency_file.unwrap_or("./dependencies.json".into()),
     };
     // binaries imply emit-build-files
     if !tcfg.binaries.is_empty() {

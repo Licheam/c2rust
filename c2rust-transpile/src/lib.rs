@@ -88,6 +88,20 @@ pub struct TranspilerConfig {
     /// Names of translation units containing main functions that we should make
     /// into binaries
     pub binaries: Vec<String>,
+    pub dependency_file: PathBuf,
+}
+#[derive(Serialize)]
+struct DependencySymbol {
+    name: String,
+    path: String,
+}
+
+#[derive(Serialize)]
+struct DependencyInfo {
+    input_path: String,
+    output_path: String,
+    undefined: Vec<DependencySymbol>,
+    defined: Vec<DependencySymbol>,
 }
 
 impl TranspilerConfig {
@@ -237,13 +251,13 @@ pub fn exporter(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str])
         )
     });
 
+    let mut dependency_infos = Vec::<DependencyInfo>::new();
+
     // Specify path to system include dir on macOS 10.14 and later. Disable the blocks extension.
     let clang_args: Vec<String> = get_extra_args_macos();
     let mut clang_args: Vec<&str> = clang_args.iter().map(AsRef::as_ref).collect();
     clang_args.extend_from_slice(extra_clang_args);
 
-    let mut top_level_ccfg = None;
-    let mut workspace_members = vec![];
     let mut num_transpiled_files = 0;
     let build_dir = get_build_dir(&tcfg, cc_db);
     for lcmd in &lcmds {
@@ -287,7 +301,7 @@ pub fn exporter(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str])
                     .unwrap_or_else(PathBuf::new);
             }
         }
-        let _ = cmds
+        let results = cmds
             .iter()
             .map(|cmd| {
                 export_single(
@@ -299,7 +313,18 @@ pub fn exporter(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str])
                     &clang_args,
                 )
             })
-            .collect::<Vec<Result<(), ()>>>();
+            .collect::<Vec<Result<DependencyInfo, ()>>>();
+
+        // add all dependencies from results to the dependency_infos
+        for res in &results {
+            match res {
+                Ok(_) => {
+                    num_transpiled_files += 1;
+                }
+                Err(_) => {}
+            }
+        }
+        dependency_infos.extend(results.into_iter().filter_map(|res| res.ok()));
     }
 
     if num_transpiled_files == 0 {
@@ -307,12 +332,32 @@ pub fn exporter(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str])
         return;
     }
 
-    if tcfg.emit_build_files {
-        let crate_file =
-            emit_build_files(&tcfg, &build_dir, top_level_ccfg, Some(workspace_members));
-        reorganize_definitions(&tcfg, &build_dir, crate_file)
-            .unwrap_or_else(|e| warn!("Reorganizing definitions failed: {}", e));
-    }
+    let mut dep_file = match File::create(&tcfg.dependency_file) {
+        Ok(file) => file,
+        Err(e) => panic!(
+            "Unable to open file {} for writing: {}",
+            tcfg.dependency_file.display(),
+            e
+        ),
+    };
+
+    println!(
+        "Writing dependencies to file {}",
+        tcfg.dependency_file.display()
+    );
+    println!(
+        "Dependencies: {:#?}",
+        serde_json::to_string(&dependency_infos).unwrap()
+    );
+
+    match dep_file.write_all(serde_json::to_string(&dependency_infos).unwrap().as_bytes()) {
+        Ok(()) => (),
+        Err(e) => panic!(
+            "Unable to write dependencies to file {}: {}",
+            tcfg.dependency_file.display(),
+            e
+        ),
+    };
 }
 
 /// Main entry point to transpiler. Called from CLI tools with the result of
@@ -524,7 +569,7 @@ fn export_single(
     build_dir: &Path,
     cc_db: &Path,
     extra_clang_args: &[&str],
-) -> Result<(), ()> {
+) -> Result<DependencyInfo, ()> {
     println!("Exporting {}", input_path.display());
     let output_path = get_output_path(tcfg, input_path.clone(), ancestor_path, build_dir);
     if output_path.exists() && !tcfg.overwrite_existing {
@@ -589,89 +634,86 @@ fn export_single(
         println!("{:#?}", Printer::new(io::stdout()).print(&typed_context));
     }
 
-    for (key, value) in typed_context.iter_decls() {
-        match &value.kind {
+    let mut export_context = typed_context.clone();
+
+    export_context.prune_unwanted_decls(tcfg.preserve_unused_functions);
+
+    let mut dependency_info = DependencyInfo {
+        input_path: input_path.to_str().unwrap().to_string(),
+        output_path: output_path.to_str().unwrap().to_string(),
+        undefined: vec![],
+        defined: vec![],
+    };
+
+    for (_, decl) in export_context.iter_decls() {
+        match &decl.kind {
             CDeclKind::Function {
-                is_global,
-                is_inline,
-                is_implicit,
-                is_extern,
-                is_inline_externally_visible,
-                typ,
+                is_global: true,
                 name,
-                parameters,
                 body,
-                attrs,
+                ..
             } => {
-                if !value.loc.is_none() {
-                    match &typed_context.get_file_path(value.loc.unwrap().fileid as usize) {
-                        Some(file) => {
-                            println!("File: {}", file.to_str().unwrap());
-                        }
-                        None => {
-                            println!("File: None");
-                        }
-                    };
-                }
-                if *is_extern {
-                    println!("Extern Function: {}", name);
+                let decl_file = export_context
+                    .get_file_path(export_context.file_id(decl).unwrap())
+                    .unwrap();
+                // println!(
+                //     "Function: {}, is_global: {}, is_implicit: {}, is_extern: {}, body: {}",
+                //     name,
+                //     is_global,
+                //     is_implicit,
+                //     is_extern,
+                //     body.is_some()
+                // );
+
+                if !body.is_some() {
+                    println!("U {}", name);
+                    dependency_info.undefined.push(DependencySymbol {
+                        name: name.to_string(),
+                        path: decl_file.to_str().unwrap().to_string(),
+                    });
+                } else if body.is_some() {
+                    println!("T {}", name);
+                    dependency_info.defined.push(DependencySymbol {
+                        name: name.to_string(),
+                        path: decl_file.to_str().unwrap().to_string(),
+                    });
                 } else {
-                    println!("Functions already defined in the c source file: {}", name)
+                    assert!(false);
                 }
             }
             CDeclKind::Variable {
-                has_static_duration,
-                has_thread_duration,
-                is_externally_visible,
+                is_externally_visible: true,
                 is_defn,
                 ident,
-                initializer,
-                typ,
-                attrs,
-            } => {}
-            CDeclKind::Enum {
-                name,
-                variants,
-                integral_type,
-            } => {}
-            CDeclKind::EnumConstant { name, value } => {}
-            CDeclKind::Typedef {
-                name,
-                typ,
-                is_implicit,
-            } => {}
-            CDeclKind::Struct {
-                name,
-                fields,
-                is_packed,
-                manual_alignment,
-                max_field_alignment,
-                platform_byte_size,
-                platform_alignment,
-            } => {}
-            CDeclKind::Union {
-                name,
-                fields,
-                is_packed,
-            } => {}
-            CDeclKind::Field {
-                name,
-                typ,
-                bitfield_width,
-                platform_bit_offset,
-                platform_type_bitwidth,
-            } => {}
-            CDeclKind::MacroObject { name } => {}
-            CDeclKind::MacroFunction { name } => {}
-            CDeclKind::NonCanonicalDecl { canonical_decl } => {}
-            CDeclKind::StaticAssert {
-                assert_expr,
-                message,
-            } => {}
+                ..
+            } => {
+                let decl_file = export_context
+                    .get_file_path(export_context.file_id(decl).unwrap())
+                    .unwrap();
+
+                // println!(
+                //     "Variable: {:?}, is_defn: {}, is_externally_visible: {}",
+                //     name, is_defn, true
+                // );
+                if *is_defn {
+                    println!("b {}", ident);
+                    dependency_info.defined.push(DependencySymbol {
+                        name: ident.to_string(),
+                        path: decl_file.to_str().unwrap().to_string(),
+                    });
+                } else {
+                    println!("U {}", ident);
+                    dependency_info.undefined.push(DependencySymbol {
+                        name: ident.to_string(),
+                        path: decl_file.to_str().unwrap().to_string(),
+                    });
+                }
+            }
+            _ => {}
         }
     }
 
-    Ok(())
+    Ok(dependency_info)
 }
 
 fn transpile_single(
