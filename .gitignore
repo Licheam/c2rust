@@ -50,4 +50,7 @@ marks.*.json
 inspect/
 *.analysis.txt
 
-dependencies.json
+*.json
+*.patch
+*.dot
+dbg.txt

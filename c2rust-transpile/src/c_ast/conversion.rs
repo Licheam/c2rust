@@ -390,6 +390,7 @@ impl ConversionContext {
 
     /// Add a `CDecl` node into the `TypedAstContext`
     fn add_decl(&mut self, id: ImporterId, decl: CDecl) {
+        // println!("Adding decl: {:?}", decl);
         self.typed_context.c_decls.insert(CDeclId(id), decl);
     }
 
@@ -1772,6 +1773,7 @@ impl ConversionContext {
 
                 // Declarations
                 ASTEntryTag::TagFunctionDecl if expected_ty & OTHER_DECL != 0 => {
+                    // println!("Function decl: {:?}", node.extras);
                     let name = from_value::<String>(node.extras[0].clone())
                         .expect("Expected to find function name");
 

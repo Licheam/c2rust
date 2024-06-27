@@ -1787,12 +1787,20 @@ class TranslateASTVisitor final
     // Some function declarations are also function definitions.
     // This method handles both types of declarations.
     bool VisitFunctionDecl(FunctionDecl *FD) {
+        // printf("VisitFunctionDecl:\n");
+        // std::cout << "FD name: " << FD->getNameAsString() << std::endl;
+        // FD->dump();
+        // FD->getSourceRange().dump(Context->getSourceManager());
         if (!FD->isCanonicalDecl()) {
+            // std::cout << "FD is not canonical decl" << std::endl;
             // Emit non-canonical decl so we have a placeholder to attach comments to
             std::vector<void *> childIds = {FD->getCanonicalDecl()};
             auto span = FD->getSourceRange();
+            // print source range
+            // FD->getSourceRange().dump(Context->getSourceManager());
             if (FD->doesThisDeclarationHaveABody())
                 span = FD->getCanonicalDecl()->getSourceRange();
+                // FD->getCanonicalDecl()->getSourceRange().dump(Context->getSourceManager());
             encode_entry(FD, TagNonCanonicalDecl, span, childIds, FD->getType());
             typeEncoder.VisitQualType(FD->getType());
             return true;
@@ -1819,7 +1827,7 @@ class TranslateASTVisitor final
         childIds.push_back(body);
 
         auto functionType = FD->getType();
-        auto span = paramsFD->getSourceRange();
+        auto span = FD->getSourceRange();
         encode_entry(
             FD, TagFunctionDecl, span, childIds, functionType,
             [this, FD](CborEncoder *array) {
@@ -1897,6 +1905,9 @@ class TranslateASTVisitor final
     }*/
 
     bool VisitVarDecl(VarDecl *VD) {
+        // std::cout << "VisitVarDecl:" << std::endl;
+        // std::cout << "VD name: " << VD->getNameAsString() << std::endl;
+        // VD->dump();
         // Skip non-canonical decls, as long as they aren't 'extern'.
         // Unfortunately, if there are two 'extern' variables in different
         // functions that should be the same at link time, Clang groups them.
@@ -1905,6 +1916,7 @@ class TranslateASTVisitor final
         if (!VD->isCanonicalDecl() && !VD->isExternC()) {
             // Emit non-canonical decl so we have a placeholder to attach comments to
             std::vector<void *> childIds = {VD->getCanonicalDecl()};
+            // std::cout << "Location: " << VD->getLocation().printToString(Context->getSourceManager()) << "\n";
             encode_entry(VD, TagNonCanonicalDecl, VD->getLocation(), childIds, VD->getType());
             typeEncoder.VisitQualType(VD->getType());
             return true;
@@ -1944,7 +1956,10 @@ class TranslateASTVisitor final
             abort();
         }
 
-        auto loc = is_defn ? def->getLocation() : VD->getLocation();
+        // std::cout << "Location: " << VD->getLocation().printToString(Context->getSourceManager()) << std::endl;
+        // std::cout << "Location: " << def->getLocation().printToString(Context->getSourceManager()) << std::endl;
+
+        auto loc = VD->getLocation();
 
         encode_entry(
             VD, TagVarDecl, loc, childIds, T,

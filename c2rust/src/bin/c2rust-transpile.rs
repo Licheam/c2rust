@@ -156,6 +156,7 @@ struct Args {
     #[clap(long)]
     fail_on_multiple: bool,
 
+    /// Path to a file to write out the dependency information (default: ./dependencies.json)
     #[clap(long)]
     dependency_file: Option<PathBuf>,
 }
