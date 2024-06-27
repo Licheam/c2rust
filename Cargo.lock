@@ -169,8 +169,8 @@ version = "0.18.0"
 dependencies = [
  "anyhow",
  "c2rust-build-paths",
- "c2rust-transpile",
  "clap 3.2.25",
+ "deps-exporter",
  "env_logger",
  "git-testament",
  "is_executable",
@@ -235,38 +235,6 @@ name = "c2rust-build-paths"
 version = "0.18.0"
 dependencies = [
  "print_bytes",
-]
-
-[[package]]
-name = "c2rust-transpile"
-version = "0.18.0"
-dependencies = [
- "c2rust-ast-builder",
- "c2rust-ast-exporter",
- "c2rust-ast-printer",
- "c2rust-bitfields",
- "colored 2.1.0",
- "dtoa",
- "failure",
- "fern",
- "handlebars",
- "indexmap",
- "itertools",
- "libc",
- "log",
- "log-reroute",
- "pathdiff",
- "proc-macro2",
- "regex",
- "serde",
- "serde_bencode",
- "serde_bytes",
- "serde_derive",
- "serde_json",
- "smallvec",
- "strum",
- "strum_macros",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -446,6 +414,38 @@ dependencies = [
  "graphviz-rust",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "deps-exporter"
+version = "0.18.0"
+dependencies = [
+ "c2rust-ast-builder",
+ "c2rust-ast-exporter",
+ "c2rust-ast-printer",
+ "c2rust-bitfields",
+ "colored 2.1.0",
+ "dtoa",
+ "failure",
+ "fern",
+ "handlebars",
+ "indexmap",
+ "itertools",
+ "libc",
+ "log",
+ "log-reroute",
+ "pathdiff",
+ "proc-macro2",
+ "regex",
+ "serde",
+ "serde_bencode",
+ "serde_bytes",
+ "serde_derive",
+ "serde_json",
+ "smallvec",
+ "strum",
+ "strum_macros",
+ "syn 1.0.109",
 ]
 
 [[package]]

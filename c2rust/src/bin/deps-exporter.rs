@@ -3,11 +3,11 @@ use log::LevelFilter;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 
-use c2rust_transpile::{Diagnostic, ReplaceMode, TranspilerConfig};
+use deps_exporter::{Diagnostic, ReplaceMode, TranspilerConfig};
 
 #[derive(Debug, Parser)]
 #[clap(
-name = "transpile",
+name = "deps-exporter",
 author = "- The C2Rust Project Developers <c2rust@immunant.com>
 - Eric Mertens <emertens@galois.com>
 - Alec Theriault <atheriault@galois.com>",
@@ -245,5 +245,5 @@ fn main() {
         .map(AsRef::as_ref)
         .collect::<Vec<_>>();
 
-    c2rust_transpile::exporter(tcfg, &cc_json_path, &extra_args);
+    deps_exporter::exporter(tcfg, &cc_json_path, &extra_args);
 }

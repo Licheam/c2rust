@@ -1,9 +1,9 @@
 [package]
-name = "c2rust-transpile"
+name = "deps-exporter"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
-description = "C2Rust transpiler implementation"
+description = "C2Rust deps exporter implementation"
 readme.workspace = true
 homepage.workspace = true
 repository.workspace = true
