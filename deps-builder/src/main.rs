@@ -16,15 +16,15 @@ about = "Build C dependencies for C2Rust",
 long_about = None,
 trailing_var_arg = true)]
 struct Args {
-    /// Use strict dependency checking (default: true)
-    #[clap(long)]
-    strict_depends: Option<bool>,
-    /// Path to a file to with the dependency information (default: ./dependencies.json)
-    #[clap(long)]
-    dependency_file: Option<PathBuf>,
-    /// Path to a file to write the dependency graph to (default: ./dependencies.dot)
-    #[clap(long)]
-    dependency_dot: Option<PathBuf>,
+    /// Use strict dependency checking
+    #[arg(long)]
+    strict_depends: bool,
+    /// Path to a file to with the dependency information
+    #[arg(long, default_value = "./dependencies.json")]
+    dependency_file: PathBuf,
+    /// Path to a file to write the dependency graph to
+    #[arg(long, default_value = "./dependencies.dot")]
+    dependency_dot: PathBuf,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -106,9 +106,9 @@ fn read_dependencies(dependency_file: &Path) -> Result<Vec<DependencyInfo>, Box<
 
 fn main() {
     let args = Args::parse();
-    let strict_depends = args.strict_depends.unwrap_or(true);
-    let dependency_file = args.dependency_file.unwrap_or("./dependencies.json".into());
-    let dependency_dot = args.dependency_dot.unwrap_or("./dependencies.dot".into());
+    let strict_depends = args.strict_depends;
+    let dependency_file = args.dependency_file;
+    let dependency_dot = args.dependency_dot;
 
     // Read dependencies from the dependency file
     let dependencies = read_dependencies(&dependency_file).unwrap_or_else(|e| {
