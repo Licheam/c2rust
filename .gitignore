@@ -53,4 +53,5 @@ inspect/
 *.json
 *.patch
 *.dot
+*.pdf
 dbg.txt

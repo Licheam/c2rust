@@ -16,6 +16,9 @@ about = "Build C dependencies for C2Rust",
 long_about = None,
 trailing_var_arg = true)]
 struct Args {
+    /// Use strict dependency checking (default: true)
+    #[clap(long)]
+    strict_depends: Option<bool>,
     /// Path to a file to with the dependency information (default: ./dependencies.json)
     #[clap(long)]
     dependency_file: Option<PathBuf>,
@@ -24,18 +27,21 @@ struct Args {
     dependency_dot: Option<PathBuf>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 struct DependencySymbol {
     name: String,
     path: String,
 }
 
-impl PartialEq for DependencySymbol {
-    fn eq(&self, other: &Self) -> bool {
-        if self.name == "usage" || other.name == "usage" {
-            return false;
+impl DependencySymbol {
+    fn depends_on(&self, other: &Self, strict: bool) -> bool {
+        if strict {
+            self == other
+        } else {
+            self.name == other.name
+                && Path::new(&self.path).parent() == Path::new(&other.path).parent()
+                && Path::new(&self.path).file_stem() == Path::new(&other.path).file_stem()
         }
-        self.name == other.name
     }
 }
 
@@ -50,6 +56,12 @@ struct DependencyInfo {
 impl PartialEq for DependencyInfo {
     fn eq(&self, other: &Self) -> bool {
         self.input_path == other.input_path && self.output_path == other.output_path
+    }
+}
+
+impl DependencyInfo {
+    fn is_main(&self) -> bool {
+        self.defined.iter().any(|s| s.name == "main")
     }
 }
 
@@ -72,11 +84,11 @@ impl DependencyGraph {
         self.edges.push(Vec::new());
     }
 
-    fn build_dependency_edges(&mut self) {
+    fn build_dependency_edges(&mut self, strict: bool) {
         for (i, node) in self.nodes.iter().enumerate() {
             for symbol in &node.undefined {
                 self.nodes.iter().enumerate().for_each(|(j, n)| {
-                    if n.defined.contains(symbol) {
+                    if !n.is_main() && n.defined.iter().any(|s| s.depends_on(symbol, strict)) {
                         self.edges[i].push(j);
                     }
                 });
@@ -94,6 +106,7 @@ fn read_dependencies(dependency_file: &Path) -> Result<Vec<DependencyInfo>, Box<
 
 fn main() {
     let args = Args::parse();
+    let strict_depends = args.strict_depends.unwrap_or(true);
     let dependency_file = args.dependency_file.unwrap_or("./dependencies.json".into());
     let dependency_dot = args.dependency_dot.unwrap_or("./dependencies.dot".into());
 
@@ -111,22 +124,11 @@ fn main() {
 
     // Build the dependency graph
     dependencies.into_iter().for_each(|dependency| {
-        if Path::new(&dependency.input_path)
-            .parent()
-            .unwrap()
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            == "lib"
-        {
-        } else {
-            dependency_graph.add_node(dependency);
-        }
+        dependency_graph.add_node(dependency);
     });
 
     // Build the dependency graph
-    dependency_graph.build_dependency_edges();
+    dependency_graph.build_dependency_edges(strict_depends);
 
     // println!("Dependency Graph: {:#?}", dependency_graph);
 
