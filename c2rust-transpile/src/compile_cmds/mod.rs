@@ -43,6 +43,23 @@ impl CompileCmd {
             }
         }
     }
+
+    pub fn abs_output_file(&self) -> Option<PathBuf> {
+        match self.output {
+            Some(ref output) => {
+                let output_file = PathBuf::from(output);
+                match output_file.is_absolute() {
+                    true => Some(output_file),
+                    false => {
+                        let path = self.directory.join(&output_file);
+                        let e = format!("could not canonicalize {}", path.display());
+                        Some(path.canonicalize().expect(&e))
+                    }
+                }
+            }
+            None => None,
+        }
+    }
 }
 
 #[derive(Deserialize, Debug, PartialEq, Eq)]
@@ -156,12 +173,21 @@ fn filter_duplicate_cmds(v: Vec<Rc<CompileCmd>>) -> Vec<Rc<CompileCmd>> {
     let mut cmds = vec![];
 
     for cmd in v {
-        let absf = cmd.abs_file();
-        if seen.contains(&absf) {
-            warn!("Skipping duplicate compilation cmd for {}", absf.display());
+        let absf: PathBuf = cmd.abs_file();
+        let absof: Option<PathBuf> = cmd.abs_output_file();
+        if seen.contains(&(absf.clone(), absof.clone())) {
+            if let Some(absof) = absof {
+                warn!(
+                    "Skipping duplicate compilation cmd for {} -> {}",
+                    absf.display(),
+                    absof.display()
+                );
+            } else {
+                warn!("Skipping duplicate compilation cmd for {}", absf.display());
+            }
             continue;
         }
-        seen.insert(absf);
+        seen.insert((absf, absof));
         cmds.push(cmd)
     }
 

@@ -88,6 +88,21 @@ pub struct TranspilerConfig {
     /// Names of translation units containing main functions that we should make
     /// into binaries
     pub binaries: Vec<String>,
+    pub dependency_file: PathBuf,
+}
+
+#[derive(Serialize)]
+struct DependencySymbol {
+    name: String,
+    path: String,
+}
+
+#[derive(Serialize)]
+struct DependencyInfo {
+    input_path: String,
+    output_path: String,
+    undefined: Vec<DependencySymbol>,
+    defined: Vec<DependencySymbol>,
 }
 
 impl TranspilerConfig {
@@ -295,6 +310,7 @@ pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]
                 transpile_single(
                     &tcfg,
                     cmd.abs_file(),
+                    cmd.abs_output_file(),
                     &ancestor_path,
                     &build_dir,
                     cc_db,
@@ -369,6 +385,128 @@ pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]
     tcfg.check_if_all_binaries_used(&transpiled_modules);
 }
 
+/// Before translate is called, exporter gens deps info
+/// clap::App::get_matches().
+pub fn exporter(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
+    diagnostics::init(tcfg.enabled_warnings.clone(), tcfg.log_level);
+
+    let lcmds = get_compile_commands(cc_db, &tcfg.filter).unwrap_or_else(|_| {
+        panic!(
+            "Could not parse compile commands from {}",
+            cc_db.to_string_lossy()
+        )
+    });
+
+    let mut dependency_infos = Vec::<DependencyInfo>::new();
+
+    // Specify path to system include dir on macOS 10.14 and later. Disable the blocks extension.
+    let clang_args: Vec<String> = get_extra_args_macos();
+    let mut clang_args: Vec<&str> = clang_args.iter().map(AsRef::as_ref).collect();
+    clang_args.extend_from_slice(extra_clang_args);
+
+    let mut num_transpiled_files = 0;
+    let build_dir = get_build_dir(&tcfg, cc_db);
+    for lcmd in &lcmds {
+        let cmds = &lcmd.cmd_inputs;
+        let lcmd_name = lcmd
+            .output
+            .as_ref()
+            .map(|output| {
+                let output_path = Path::new(output);
+                output_path
+                    .file_stem()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .unwrap_or_else(|| tcfg.crate_name());
+        let build_dir = if lcmd.top_level {
+            build_dir.to_path_buf()
+        } else {
+            build_dir.join(&lcmd_name)
+        };
+
+        // Compute the common ancestor of all input files
+        // FIXME: this is quadratic-time in the length of the ancestor path
+        let mut ancestor_path = cmds
+            .first()
+            .map(|cmd| {
+                let mut dir = cmd.abs_file();
+                dir.pop(); // discard the file part
+                dir
+            })
+            .unwrap_or_else(PathBuf::new);
+        if cmds.len() > 1 {
+            for cmd in &cmds[1..] {
+                let cmd_path = cmd.abs_file();
+                ancestor_path = ancestor_path
+                    .ancestors()
+                    .find(|a| cmd_path.starts_with(a))
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_else(PathBuf::new);
+            }
+        }
+        let results = cmds
+            .iter()
+            .map(|cmd| {
+                export_single(
+                    &tcfg,
+                    cmd.abs_file(),
+                    cmd.abs_output_file(),
+                    &ancestor_path,
+                    &build_dir,
+                    cc_db,
+                    &clang_args,
+                )
+            })
+            .collect::<Vec<Result<DependencyInfo, ()>>>();
+
+        // add all dependencies from results to the dependency_infos
+        for res in &results {
+            match res {
+                Ok(_) => {
+                    num_transpiled_files += 1;
+                }
+                Err(_) => {}
+            }
+        }
+        dependency_infos.extend(results.into_iter().filter_map(|res| res.ok()));
+    }
+
+    if num_transpiled_files == 0 {
+        warn!("No C files found in compile_commands.json; nothing to do.");
+        return;
+    }
+
+    let mut dep_file = match File::create(&tcfg.dependency_file) {
+        Ok(file) => file,
+        Err(e) => panic!(
+            "Unable to open file {} for writing: {}",
+            tcfg.dependency_file.display(),
+            e
+        ),
+    };
+
+    println!(
+        "Writing dependencies to file {}",
+        tcfg.dependency_file.display()
+    );
+    println!(
+        "Dependencies: {:#?}",
+        serde_json::to_string(&dependency_infos).unwrap()
+    );
+
+    match dep_file.write_all(serde_json::to_string(&dependency_infos).unwrap().as_bytes()) {
+        Ok(()) => (),
+        Err(e) => panic!(
+            "Unable to write dependencies to file {}: {}",
+            tcfg.dependency_file.display(),
+            e
+        ),
+    };
+}
+
 /// Ensure that clang can locate the system headers on macOS 10.14+.
 ///
 /// MacOS 10.14 does not have a `/usr/include` folder even if Xcode
@@ -430,12 +568,19 @@ fn reorganize_definitions(
 fn transpile_single(
     tcfg: &TranspilerConfig,
     input_path: PathBuf,
+    output_path: Option<PathBuf>,
     ancestor_path: &Path,
     build_dir: &Path,
     cc_db: &Path,
     extra_clang_args: &[&str],
 ) -> TranspileResult {
-    let output_path = get_output_path(tcfg, input_path.clone(), ancestor_path, build_dir);
+    let output_path = get_output_path(
+        tcfg,
+        input_path.clone(),
+        output_path,
+        ancestor_path,
+        build_dir,
+    );
     if output_path.exists() && !tcfg.overwrite_existing {
         warn!("Skipping existing file {}", output_path.display());
         return Err(());
@@ -523,14 +668,178 @@ fn transpile_single(
     Ok((output_path, pragmas, crates))
 }
 
+fn export_single(
+    tcfg: &TranspilerConfig,
+    input_path: PathBuf,
+    output_path: Option<PathBuf>,
+    ancestor_path: &Path,
+    build_dir: &Path,
+    cc_db: &Path,
+    extra_clang_args: &[&str],
+) -> Result<DependencyInfo, ()> {
+    let output_path = get_output_path(
+        tcfg,
+        input_path.clone(),
+        output_path,
+        ancestor_path,
+        build_dir,
+    );
+    if output_path.exists() && !tcfg.overwrite_existing {
+        warn!("Skipping existing file {}", output_path.display());
+        return Err(());
+    }
+
+    let file = input_path.file_name().unwrap().to_str().unwrap();
+    if !input_path.exists() {
+        warn!(
+            "Input C file {} does not exist, skipping!",
+            input_path.display()
+        );
+        return Err(());
+    }
+
+    if tcfg.verbose {
+        println!("Additional Clang arguments: {}", extra_clang_args.join(" "));
+    }
+
+    // Extract the untyped AST from the CBOR file
+    let untyped_context = match ast_exporter::get_untyped_ast(
+        input_path.as_path(),
+        cc_db,
+        extra_clang_args,
+        tcfg.debug_ast_exporter,
+    ) {
+        Err(e) => {
+            warn!(
+                "Error: {}. Skipping {}; is it well-formed C?",
+                e,
+                input_path.display()
+            );
+            return Err(());
+        }
+        Ok(cxt) => cxt,
+    };
+
+    println!("Exporting {}", file);
+
+    if tcfg.dump_untyped_context {
+        println!("CBOR Clang AST");
+        println!("{:#?}", untyped_context);
+    }
+
+    // Convert this into a typed AST
+    let typed_context = {
+        let conv = ConversionContext::new(&untyped_context);
+        if conv.invalid_clang_ast && tcfg.fail_on_error {
+            panic!("Clang AST was invalid");
+        }
+        conv.typed_context
+    };
+
+    if tcfg.dump_typed_context {
+        println!("Clang AST");
+        println!("{:#?}", typed_context);
+    }
+
+    if tcfg.pretty_typed_context {
+        println!("Pretty-printed Clang AST");
+        println!("{:#?}", Printer::new(io::stdout()).print(&typed_context));
+    }
+
+    let mut export_context = typed_context.clone();
+
+    export_context.prune_unwanted_decls(tcfg.preserve_unused_functions);
+
+    let mut dependency_info = DependencyInfo {
+        input_path: input_path.to_str().unwrap().to_string(),
+        output_path: output_path.to_str().unwrap().to_string(),
+        undefined: vec![],
+        defined: vec![],
+    };
+
+    for (_, decl) in export_context.iter_decls() {
+        match &decl.kind {
+            CDeclKind::Function {
+                is_global: true,
+                name,
+                body,
+                ..
+            } => {
+                let decl_file = export_context
+                    .get_file_path(export_context.file_id(decl).unwrap())
+                    .unwrap();
+                // println!(
+                //     "Function: {}, is_global: {}, is_implicit: {}, is_extern: {}, body: {}",
+                //     name,
+                //     is_global,
+                //     is_implicit,
+                //     is_extern,
+                //     body.is_some()
+                // );
+
+                if !body.is_some() {
+                    println!("U {}", name);
+                    dependency_info.undefined.push(DependencySymbol {
+                        name: name.to_string(),
+                        path: decl_file.to_str().unwrap().to_string(),
+                    });
+                } else if body.is_some() {
+                    println!("T {}", name);
+                    dependency_info.defined.push(DependencySymbol {
+                        name: name.to_string(),
+                        path: decl_file.to_str().unwrap().to_string(),
+                    });
+                } else {
+                    assert!(false);
+                }
+            }
+            CDeclKind::Variable {
+                is_externally_visible: true,
+                is_defn,
+                ident,
+                ..
+            } => {
+                let decl_file = export_context
+                    .get_file_path(export_context.file_id(decl).unwrap())
+                    .unwrap();
+
+                // println!(
+                //     "Variable: {:?}, is_defn: {}, is_externally_visible: {}",
+                //     name, is_defn, true
+                // );
+                if *is_defn {
+                    println!("b {}", ident);
+                    dependency_info.defined.push(DependencySymbol {
+                        name: ident.to_string(),
+                        path: decl_file.to_str().unwrap().to_string(),
+                    });
+                } else {
+                    println!("U {}", ident);
+                    dependency_info.undefined.push(DependencySymbol {
+                        name: ident.to_string(),
+                        path: decl_file.to_str().unwrap().to_string(),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(dependency_info)
+}
+
 fn get_output_path(
     tcfg: &TranspilerConfig,
     mut input_path: PathBuf,
+    output_path: Option<PathBuf>,
     ancestor_path: &Path,
     build_dir: &Path,
 ) -> PathBuf {
     // When an output file name is not explictly specified, we should convert files
     // with dashes to underscores, as they are not allowed in rust file names.
+    if let Some(output_path) = output_path {
+        input_path = output_path;
+    }
     let file_name = input_path
         .file_name()
         .unwrap()

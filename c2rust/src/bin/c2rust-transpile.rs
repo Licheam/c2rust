@@ -7,7 +7,7 @@ use c2rust_transpile::{Diagnostic, ReplaceMode, TranspilerConfig};
 
 #[derive(Debug, Parser)]
 #[clap(
-name = "transpile",
+name = "deps-exporter",
 author = "- The C2Rust Project Developers <c2rust@immunant.com>
 - Eric Mertens <emertens@galois.com>
 - Alec Theriault <atheriault@galois.com>",
@@ -155,6 +155,10 @@ struct Args {
     /// Fail when the control-flow graph generates branching constructs
     #[clap(long)]
     fail_on_multiple: bool,
+
+    /// Path to a file to write out the dependency information (default: ./dependencies.json)
+    #[clap(long)]
+    dependency_file: Option<PathBuf>,
 }
 
 #[derive(Debug, PartialEq, Eq, ValueEnum, Clone)]
@@ -216,6 +220,7 @@ fn main() {
         emit_no_std: args.emit_no_std,
         enabled_warnings: args.warn.into_iter().collect(),
         log_level: args.log_level,
+        dependency_file: args.dependency_file.unwrap_or("./dependencies.json".into()),
     };
     // binaries imply emit-build-files
     if !tcfg.binaries.is_empty() {
@@ -240,5 +245,5 @@ fn main() {
         .map(AsRef::as_ref)
         .collect::<Vec<_>>();
 
-    c2rust_transpile::transpile(tcfg, &cc_json_path, &extra_args);
+    deps_exporter::transpile(tcfg, &cc_json_path, &extra_args);
 }

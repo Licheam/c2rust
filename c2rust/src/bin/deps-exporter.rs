@@ -3,7 +3,7 @@ use log::LevelFilter;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 
-use deps_exporter::{Diagnostic, ReplaceMode, TranspilerConfig};
+use c2rust_transpile::{Diagnostic, ReplaceMode, TranspilerConfig};
 
 #[derive(Debug, Parser)]
 #[clap(
@@ -245,5 +245,5 @@ fn main() {
         .map(AsRef::as_ref)
         .collect::<Vec<_>>();
 
-    deps_exporter::exporter(tcfg, &cc_json_path, &extra_args);
+    c2rust_transpile::exporter(tcfg, &cc_json_path, &extra_args);
 }
