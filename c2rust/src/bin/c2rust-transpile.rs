@@ -245,5 +245,5 @@ fn main() {
         .map(AsRef::as_ref)
         .collect::<Vec<_>>();
 
-    deps_exporter::transpile(tcfg, &cc_json_path, &extra_args);
+    c2rust_transpile::transpile(tcfg, &cc_json_path, &extra_args);
 }
