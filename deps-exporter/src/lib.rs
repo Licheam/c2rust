@@ -570,7 +570,6 @@ fn export_single(
     cc_db: &Path,
     extra_clang_args: &[&str],
 ) -> Result<DependencyInfo, ()> {
-    println!("Exporting {}", input_path.display());
     let output_path = get_output_path(tcfg, input_path.clone(), ancestor_path, build_dir);
     if output_path.exists() && !tcfg.overwrite_existing {
         warn!("Skipping existing file {}", output_path.display());
@@ -608,7 +607,7 @@ fn export_single(
         Ok(cxt) => cxt,
     };
 
-    println!("Transpiling {}", file);
+    println!("Exporting {}", file);
 
     if tcfg.dump_untyped_context {
         println!("CBOR Clang AST");

@@ -202,7 +202,7 @@ pub fn get_compile_commands(
 
     for lcmd in &mut lcmds {
         let inputs = std::mem::take(&mut lcmd.cmd_inputs);
-        let inputs = filter_duplicate_cmds(inputs);
+        // let inputs = filter_duplicate_cmds(inputs);
         lcmd.cmd_inputs = inputs;
     }
 

@@ -26,6 +26,7 @@ log = "0.4"
 regex = "1.3"
 shlex = "1.1"
 deps-exporter = { version = "0.18.0", path = "../deps-exporter" }
+c2rust-transpile = { version = "0.18.0", path = "../c2rust-transpile" }
 # Required to avoid too-new version (dep of git-testament) which our rustc cannot compile
 time-macros = "=0.2.6"
 

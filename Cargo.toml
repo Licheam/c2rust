@@ -6,6 +6,7 @@ members = [
     "c2rust-bitfields",
     "c2rust-bitfields-derive",
     "c2rust-build-paths",
+    "c2rust-transpile",
     "deps-exporter",
     "deps-builder",
 ]

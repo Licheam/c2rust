@@ -17,13 +17,13 @@ long_about = None,
 trailing_var_arg = true)]
 struct Args {
     /// Use strict dependency checking
-    #[arg(long)]
+    #[clap(long)]
     strict_depends: bool,
     /// Path to a file to with the dependency information
-    #[arg(long, default_value = "./dependencies.json")]
+    #[clap(long, default_value = "./dependencies.json")]
     dependency_file: PathBuf,
     /// Path to a file to write the dependency graph to
-    #[arg(long, default_value = "./dependencies.dot")]
+    #[clap(long, default_value = "./dependencies.dot")]
     dependency_dot: PathBuf,
 }
 
