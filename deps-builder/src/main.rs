@@ -12,6 +12,7 @@ use std::process;
 #[derive(Debug, Parser)]
 #[clap(
 name = "deps-builder",
+author = "- DEPSO (DEPendable SOftware) Research Group From ISCAS",
 about = "Build C dependencies for C2Rust",
 long_about = None,
 trailing_var_arg = true)]

@@ -8,9 +8,7 @@ use c2rust_transpile::{Diagnostic, ReplaceMode, TranspilerConfig};
 #[derive(Debug, Parser)]
 #[clap(
 name = "deps-exporter",
-author = "- The C2Rust Project Developers <c2rust@immunant.com>
-- Eric Mertens <emertens@galois.com>
-- Alec Theriault <atheriault@galois.com>",
+author = "- DEPSO (DEPendable SOftware) Research Group From ISCAS",
 version,
 about = "Translate C code to equivalent Rust code",
 long_about = None,
