@@ -88,6 +88,7 @@ pub struct TranspilerConfig {
     /// Names of translation units containing main functions that we should make
     /// into binaries
     pub binaries: Vec<String>,
+    pub detect_binaries: bool,
     pub dependency_file: PathBuf,
 }
 
@@ -387,7 +388,7 @@ pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]
 
 /// Before translate is called, exporter gens deps info
 /// clap::App::get_matches().
-pub fn exporter(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
+pub fn export(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
     diagnostics::init(tcfg.enabled_warnings.clone(), tcfg.log_level);
 
     let lcmds = get_compile_commands(cc_db, &tcfg.filter).unwrap_or_else(|_| {
