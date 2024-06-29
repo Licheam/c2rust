@@ -56,6 +56,21 @@ pub fn get_build_dir(tcfg: &TranspilerConfig, cc_db: &Path) -> PathBuf {
     }
 }
 
+/// Get the build directory without creating it
+pub fn get_build_dir_raw(tcfg: &TranspilerConfig, cc_db: &Path) -> PathBuf {
+    let cc_db_dir = cc_db
+        .parent() // get directory of `compile_commands.json`
+        .unwrap();
+
+    match &tcfg.output_dir {
+        Some(dir) => {
+            let output_dir = dir.clone();
+            output_dir
+        }
+        None => cc_db_dir.into(),
+    }
+}
+
 pub struct CrateConfig<'lcmd> {
     pub crate_name: String,
     pub modules: Vec<PathBuf>,

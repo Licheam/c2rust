@@ -30,7 +30,7 @@ use crate::c_ast::*;
 pub use crate::diagnostics::Diagnostic;
 use c2rust_ast_exporter as ast_exporter;
 
-use crate::build_files::{emit_build_files, get_build_dir, CrateConfig};
+use crate::build_files::{emit_build_files, get_build_dir, get_build_dir_raw, CrateConfig};
 use crate::compile_cmds::get_compile_commands;
 use crate::convert_type::RESERVED_NAMES;
 pub use crate::translator::ReplaceMode;
@@ -406,7 +406,7 @@ pub fn export(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
     clang_args.extend_from_slice(extra_clang_args);
 
     let mut num_transpiled_files = 0;
-    let build_dir = get_build_dir(&tcfg, cc_db);
+    let build_dir = get_build_dir_raw(&tcfg, cc_db);
     for lcmd in &lcmds {
         let cmds = &lcmd.cmd_inputs;
         let lcmd_name = lcmd
@@ -678,7 +678,7 @@ fn export_single(
     cc_db: &Path,
     extra_clang_args: &[&str],
 ) -> Result<DependencyInfo, ()> {
-    let output_path = get_output_path(
+    let output_path = get_output_path_raw(
         tcfg,
         input_path.clone(),
         output_path,
@@ -872,6 +872,48 @@ fn get_output_path(
                 panic!("couldn't create source directory: {}", parent.display())
             });
         }
+        output_path
+    } else {
+        input_path
+    }
+}
+
+fn get_output_path_raw(
+    tcfg: &TranspilerConfig,
+    mut input_path: PathBuf,
+    output_path: Option<PathBuf>,
+    ancestor_path: &Path,
+    build_dir: &Path,
+) -> PathBuf {
+    // When an output file name is not explictly specified, we should convert files
+    // with dashes to underscores, as they are not allowed in rust file names.
+    if let Some(output_path) = output_path {
+        input_path = output_path;
+    }
+    let file_name = input_path
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .replace('-', "_");
+
+    input_path.set_file_name(file_name);
+    input_path.set_extension("rs");
+
+    if tcfg.output_dir.is_some() {
+        let path_buf = input_path
+            .strip_prefix(ancestor_path)
+            .expect("Couldn't strip common ancestor path");
+
+        // Place the source files in build_dir/src/
+        let mut output_path = build_dir.to_path_buf();
+        output_path.push("src");
+        for elem in path_buf.iter() {
+            let path = Path::new(elem);
+            let name = get_module_name(path, false, true, false).unwrap();
+            output_path.push(name);
+        }
+
         output_path
     } else {
         input_path
