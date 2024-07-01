@@ -191,6 +191,7 @@ dependencies = [
  "c2rust-ast-printer",
  "c2rust-bitfields",
  "colored 2.0.0",
+ "deps-builder",
  "dtoa",
  "failure",
  "fern",
@@ -338,7 +339,7 @@ dependencies = [
 
 [[package]]
 name = "deps-builder"
-version = "0.1.0"
+version = "0.18.0"
 dependencies = [
  "clap",
  "dot-generator",

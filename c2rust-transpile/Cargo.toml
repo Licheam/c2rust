@@ -16,6 +16,7 @@ c2rust-ast-builder = { version = "0.18.0", path = "../c2rust-ast-builder" }
 c2rust-ast-exporter = { version = "0.18.0", path = "../c2rust-ast-exporter" }
 c2rust-ast-printer = { version = "0.18.0", path = "../c2rust-ast-printer" }
 c2rust-bitfields = { version = "0.18.0", path = "../c2rust-bitfields" }
+deps-builder = { version = "0.18.0", path = "../deps-builder" }
 colored = "2.0"
 dtoa = "1.0"
 failure = "0.1.5"

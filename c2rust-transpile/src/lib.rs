@@ -41,6 +41,8 @@ type PragmaSet = indexmap::IndexSet<(&'static str, &'static str)>;
 type CrateSet = indexmap::IndexSet<ExternCrate>;
 type TranspileResult = Result<(PathBuf, PragmaVec, CrateSet), ()>;
 
+use deps_builder::{DependencyInfo, DependencySymbol
+
 /// Configuration settings for the translation process
 #[derive(Debug)]
 pub struct TranspilerConfig {
@@ -90,20 +92,6 @@ pub struct TranspilerConfig {
     pub binaries: Vec<String>,
     pub detect_binaries: bool,
     pub dependency_file: PathBuf,
-}
-
-#[derive(Serialize)]
-struct DependencySymbol {
-    name: String,
-    path: String,
-}
-
-#[derive(Serialize)]
-struct DependencyInfo {
-    input_path: String,
-    output_path: String,
-    undefined: Vec<DependencySymbol>,
-    defined: Vec<DependencySymbol>,
 }
 
 impl TranspilerConfig {

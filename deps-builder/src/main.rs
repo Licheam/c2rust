@@ -2,12 +2,12 @@ use clap::Parser;
 use dot_generator::*;
 use dot_structures::*;
 use graphviz_rust::printer::{DotPrinter, PrinterContext};
-use serde::Deserialize;
-use std::error::Error;
 use std::fs::File;
-use std::io::{BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process;
+
+use deps_builder::{read_dependencies, DependencyGraph};
 
 #[derive(Debug, Parser)]
 #[clap(
@@ -26,83 +26,6 @@ struct Args {
     /// Path to a file to write the dependency graph to
     #[clap(long, default_value = "./dependencies.dot")]
     dependency_dot: PathBuf,
-}
-
-#[derive(Debug, Deserialize, PartialEq)]
-struct DependencySymbol {
-    name: String,
-    path: String,
-}
-
-impl DependencySymbol {
-    fn depends_on(&self, other: &Self, strict: bool) -> bool {
-        if strict {
-            self == other
-        } else {
-            self.name == other.name
-                && Path::new(&self.path).parent() == Path::new(&other.path).parent()
-                && Path::new(&self.path).file_stem() == Path::new(&other.path).file_stem()
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct DependencyInfo {
-    input_path: String,
-    output_path: String,
-    undefined: Vec<DependencySymbol>,
-    defined: Vec<DependencySymbol>,
-}
-
-impl PartialEq for DependencyInfo {
-    fn eq(&self, other: &Self) -> bool {
-        self.input_path == other.input_path && self.output_path == other.output_path
-    }
-}
-
-impl DependencyInfo {
-    fn is_main(&self) -> bool {
-        self.defined.iter().any(|s| s.name == "main")
-    }
-}
-
-#[derive(Debug)]
-struct DependencyGraph {
-    nodes: Vec<DependencyInfo>,
-    edges: Vec<Vec<usize>>,
-}
-
-impl DependencyGraph {
-    fn new() -> Self {
-        Self {
-            nodes: Vec::new(),
-            edges: Vec::new(),
-        }
-    }
-
-    fn add_node(&mut self, node: DependencyInfo) {
-        self.nodes.push(node);
-        self.edges.push(Vec::new());
-    }
-
-    fn build_dependency_edges(&mut self, strict: bool) {
-        for (i, node) in self.nodes.iter().enumerate() {
-            for symbol in &node.undefined {
-                self.nodes.iter().enumerate().for_each(|(j, n)| {
-                    if !n.is_main() && n.defined.iter().any(|s| s.depends_on(symbol, strict)) {
-                        self.edges[i].push(j);
-                    }
-                });
-            }
-        }
-    }
-}
-
-fn read_dependencies(dependency_file: &Path) -> Result<Vec<DependencyInfo>, Box<dyn Error>> {
-    let file = File::open(dependency_file)?;
-    let reader = BufReader::new(file);
-    let dependencies: Vec<DependencyInfo> = serde_json::from_reader(reader)?;
-    Ok(dependencies)
 }
 
 fn main() {
