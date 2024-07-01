@@ -703,10 +703,6 @@ fn export_single(
         ancestor_path,
         build_dir,
     );
-    if output_path.exists() && !tcfg.overwrite_existing {
-        warn!("Skipping existing file {}", output_path.display());
-        return Err(());
-    }
 
     let file = input_path.file_name().unwrap().to_str().unwrap();
     if !input_path.exists() {
