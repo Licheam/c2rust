@@ -41,10 +41,10 @@ type PragmaSet = indexmap::IndexSet<(&'static str, &'static str)>;
 type CrateSet = indexmap::IndexSet<ExternCrate>;
 type TranspileResult = Result<(PathBuf, PragmaVec, CrateSet), ()>;
 
-use deps_builder::{DependencyInfo, DependencySymbol};
+use deps_builder::{build_dependency, DependencyGraph, DependencyInfo, DependencySymbol};
 
 /// Configuration settings for the translation process
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TranspilerConfig {
     // Debug output options
     pub dump_untyped_context: bool,
@@ -92,6 +92,7 @@ pub struct TranspilerConfig {
     pub binaries: Vec<String>,
     pub detect_binaries: bool,
     pub dependency_file: PathBuf,
+    pub fuzz_depends: bool,
 }
 
 impl TranspilerConfig {
@@ -100,9 +101,15 @@ impl TranspilerConfig {
         get_module_name(file, false, false, false).unwrap()
     }
 
-    fn is_binary(&self, file: &Path) -> bool {
+    fn is_binary(&self, dependency_info: &DependencyInfo) -> bool {
+        let file = dependency_info.input_path.as_ref();
         let module_name = Self::binary_name_from_path(file);
         self.binaries.contains(&module_name)
+            || (self.detect_binaries
+                && dependency_info
+                    .defined
+                    .iter()
+                    .any(|symbol| symbol.name.contains("main")))
     }
 
     fn check_if_all_binaries_used(
@@ -232,6 +239,9 @@ fn get_module_name(
 /// Main entry point to transpiler. Called from CLI tools with the result of
 /// clap::App::get_matches().
 pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
+    let dependency_infos = export(tcfg.clone(), cc_db, extra_clang_args);
+    let dependency_graph = build_dependency(dependency_infos, tcfg.fuzz_depends);
+
     diagnostics::init(tcfg.enabled_warnings.clone(), tcfg.log_level);
 
     let lcmds = get_compile_commands(cc_db, &tcfg.filter).unwrap_or_else(|_| {
@@ -304,6 +314,7 @@ pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]
                     &build_dir,
                     cc_db,
                     &clang_args,
+                    &dependency_graph,
                 )
             })
             .collect::<Vec<TranspileResult>>();
@@ -351,7 +362,8 @@ pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]
             if lcmd.top_level {
                 top_level_ccfg = Some(ccfg);
             } else {
-                let crate_file = emit_build_files(&tcfg, &build_dir, Some(ccfg), None);
+                let crate_file =
+                    emit_build_files(&tcfg, &build_dir, Some(ccfg), None, &dependency_graph);
                 reorganize_definitions(&tcfg, &build_dir, crate_file)
                     .unwrap_or_else(|e| warn!("Reorganizing definitions failed: {}", e));
                 workspace_members.push(lcmd_name);
@@ -365,8 +377,13 @@ pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]
     }
 
     if tcfg.emit_build_files {
-        let crate_file =
-            emit_build_files(&tcfg, &build_dir, top_level_ccfg, Some(workspace_members));
+        let crate_file = emit_build_files(
+            &tcfg,
+            &build_dir,
+            top_level_ccfg,
+            Some(workspace_members),
+            &dependency_graph,
+        );
         reorganize_definitions(&tcfg, &build_dir, crate_file)
             .unwrap_or_else(|e| warn!("Reorganizing definitions failed: {}", e));
     }
@@ -376,7 +393,11 @@ pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]
 
 /// Before translate is called, exporter gens deps info
 /// clap::App::get_matches().
-pub fn export(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
+pub fn export(
+    tcfg: TranspilerConfig,
+    cc_db: &Path,
+    extra_clang_args: &[&str],
+) -> Vec<DependencyInfo> {
     diagnostics::init(tcfg.enabled_warnings.clone(), tcfg.log_level);
 
     let lcmds = get_compile_commands(cc_db, &tcfg.filter).unwrap_or_else(|_| {
@@ -465,7 +486,7 @@ pub fn export(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
 
     if num_transpiled_files == 0 {
         warn!("No C files found in compile_commands.json; nothing to do.");
-        return;
+        return dependency_infos;
     }
 
     let mut dep_file = match File::create(&tcfg.dependency_file) {
@@ -481,10 +502,6 @@ pub fn export(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
         "Writing dependencies to file {}",
         tcfg.dependency_file.display()
     );
-    println!(
-        "Dependencies: {:#?}",
-        serde_json::to_string(&dependency_infos).unwrap()
-    );
 
     match dep_file.write_all(serde_json::to_string(&dependency_infos).unwrap().as_bytes()) {
         Ok(()) => (),
@@ -494,6 +511,8 @@ pub fn export(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
             e
         ),
     };
+
+    dependency_infos
 }
 
 /// Ensure that clang can locate the system headers on macOS 10.14+.
@@ -562,6 +581,7 @@ fn transpile_single(
     build_dir: &Path,
     cc_db: &Path,
     extra_clang_args: &[&str],
+    dependency_graph: &DependencyGraph,
 ) -> TranspileResult {
     let output_path = get_output_path(
         tcfg,
@@ -633,8 +653,18 @@ fn transpile_single(
     }
 
     // Perform the translation
-    let (translated_string, pragmas, crates) =
-        translator::translate(typed_context, tcfg, input_path);
+    let (translated_string, pragmas, crates) = translator::translate(
+        typed_context,
+        tcfg,
+        &input_path,
+        tcfg.is_binary(
+            &(dependency_graph
+                .nodes
+                .iter()
+                .find(|dep| dep.input_path == input_path.to_str().unwrap())
+                .unwrap()),
+        ),
+    );
 
     let mut file = match File::create(&output_path) {
         Ok(file) => file,

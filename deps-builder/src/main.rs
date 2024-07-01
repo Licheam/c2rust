@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use deps_builder::{read_dependencies, DependencyGraph};
+use deps_builder::{build_dependency, read_dependencies};
 
 #[derive(Debug, Parser)]
 #[clap(
@@ -17,9 +17,9 @@ about = "Build C dependencies for C2Rust",
 long_about = None,
 trailing_var_arg = true)]
 struct Args {
-    /// Use strict dependency checking
+    /// Use fuzzing dependency checking
     #[clap(long)]
-    strict_depends: bool,
+    fuzz_depends: bool,
     /// Path to a file to with the dependency information
     #[clap(long, default_value = "./dependencies.json")]
     dependency_file: PathBuf,
@@ -30,12 +30,12 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    let strict_depends = args.strict_depends;
+    let fuzz_depends = args.fuzz_depends;
     let dependency_file = args.dependency_file;
     let dependency_dot = args.dependency_dot;
 
     // Read dependencies from the dependency file
-    let dependencies = read_dependencies(&dependency_file).unwrap_or_else(|e| {
+    let dependency_infos = read_dependencies(&dependency_file).unwrap_or_else(|e| {
         eprintln!(
             "Error reading dependencies from {}: {}",
             dependency_file.display(),
@@ -44,15 +44,7 @@ fn main() {
         process::exit(1);
     });
 
-    let mut dependency_graph = DependencyGraph::new();
-
-    // Build the dependency graph
-    dependencies.into_iter().for_each(|dependency| {
-        dependency_graph.add_node(dependency);
-    });
-
-    // Build the dependency graph
-    dependency_graph.build_dependency_edges(strict_depends);
+    let dependency_graph = build_dependency(dependency_infos, fuzz_depends);
 
     // println!("Dependency Graph: {:#?}", dependency_graph);
 

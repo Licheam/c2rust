@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use deps_builder::DependencyGraph;
 use handlebars::Handlebars;
 use pathdiff::diff_paths;
 use serde_derive::Serialize;
@@ -87,6 +88,7 @@ pub fn emit_build_files<'lcmd>(
     build_dir: &Path,
     crate_cfg: Option<CrateConfig<'lcmd>>,
     workspace_members: Option<Vec<String>>,
+    dependency_graph: &DependencyGraph,
 ) -> Option<PathBuf> {
     let mut reg = Handlebars::new();
 
@@ -102,7 +104,14 @@ pub fn emit_build_files<'lcmd>(
             .unwrap_or_else(|_| panic!("couldn't create build directory: {}", build_dir.display()));
     }
 
-    emit_cargo_toml(tcfg, &reg, build_dir, &crate_cfg, workspace_members);
+    emit_cargo_toml(
+        tcfg,
+        &reg,
+        build_dir,
+        &crate_cfg,
+        workspace_members,
+        &dependency_graph,
+    );
     if tcfg.translate_valist {
         emit_rust_toolchain(tcfg, build_dir);
     }
@@ -115,6 +124,7 @@ pub fn emit_build_files<'lcmd>(
             ccfg.modules,
             ccfg.pragmas,
             &ccfg.crates,
+            &dependency_graph,
         )
     })
 }
@@ -177,9 +187,16 @@ fn convert_module_list(
     build_dir: &Path,
     mut modules: Vec<PathBuf>,
     module_subset: ModuleSubset,
+    dependency_graph: &DependencyGraph,
 ) -> Vec<Module> {
     modules.retain(|m| {
-        let is_binary = tcfg.is_binary(m);
+        let is_binary = tcfg.is_binary(
+            &(dependency_graph
+                .nodes
+                .iter()
+                .find(|n| n.output_path == m.to_str().unwrap())
+                .unwrap()),
+        );
         let is_binary_subset = module_subset == ModuleSubset::Binaries;
         // Don't add binary modules to lib.rs, these are emitted to
         // standalone, separate binary modules.
@@ -190,7 +207,15 @@ fn convert_module_list(
     let mut module_tree = ModuleTree(BTreeMap::new());
     for m in &modules {
         match m.strip_prefix(build_dir) {
-            Ok(relpath) if !tcfg.is_binary(m) => {
+            Ok(relpath)
+                if !tcfg.is_binary(
+                    &(dependency_graph
+                        .nodes
+                        .iter()
+                        .find(|n| n.output_path == m.to_str().unwrap())
+                        .unwrap()),
+                ) =>
+            {
                 // The module is inside the build directory, use nested modules
                 let mut cur = &mut module_tree;
                 for sm in relpath.iter() {
@@ -252,8 +277,15 @@ fn emit_lib_rs(
     modules: Vec<PathBuf>,
     pragmas: PragmaSet,
     crates: &CrateSet,
+    dependency_graph: &DependencyGraph,
 ) -> Option<PathBuf> {
-    let modules = convert_module_list(tcfg, build_dir, modules, ModuleSubset::Libraries);
+    let modules = convert_module_list(
+        tcfg,
+        build_dir,
+        modules,
+        ModuleSubset::Libraries,
+        &dependency_graph,
+    );
     let crates = convert_dependencies_list(crates.clone());
     let file_name = get_lib_rs_file_name(tcfg);
     let json = json!({
@@ -285,6 +317,7 @@ fn emit_cargo_toml<'lcmd>(
     build_dir: &Path,
     crate_cfg: &Option<CrateConfig<'lcmd>>,
     workspace_members: Option<Vec<String>>,
+    dependency_graph: &DependencyGraph,
 ) {
     // rust_checks_path is gone because we don't want to refer to the source
     // path but instead want the cross-check libs to be installed via cargo.
@@ -299,6 +332,7 @@ fn emit_cargo_toml<'lcmd>(
             build_dir,
             ccfg.modules.to_owned(),
             ModuleSubset::Binaries,
+            dependency_graph,
         );
         let dependencies = convert_dependencies_list(ccfg.crates.clone());
         let crate_json = json!({

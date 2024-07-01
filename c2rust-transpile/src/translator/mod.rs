@@ -490,7 +490,8 @@ pub fn translate_failure(tcfg: &TranspilerConfig, msg: &str) {
 pub fn translate(
     ast_context: TypedAstContext,
     tcfg: &TranspilerConfig,
-    main_file: PathBuf,
+    main_file: &PathBuf,
+    is_binary: bool,
 ) -> (String, PragmaVec, CrateSet) {
     let mut t = Translation::new(ast_context, tcfg, main_file.as_path());
     let ctx = ExprContext {
@@ -857,7 +858,7 @@ pub fn translate(
 
         // pass all converted items to the Rust pretty printer
         let translation = pprust::to_string(|| {
-            let (attrs, mut all_items) = arrange_header(&t, t.tcfg.is_binary(main_file.as_path()));
+            let (attrs, mut all_items) = arrange_header(&t, is_binary);
 
             all_items.extend(mod_items);
 
