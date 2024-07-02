@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use deps_builder::{build_dependency, read_dependencies};
+use deps_builder::{build_dependency, extract_sub_dependency_for, read_dependencies};
 
 #[derive(Debug, Parser)]
 #[clap(
@@ -26,6 +26,12 @@ struct Args {
     /// Path to a file to write the dependency graph to
     #[clap(long, default_value = "./dependencies.dot")]
     dependency_dot: PathBuf,
+    /// Emit Rust dependencies for the given binaries
+    #[clap(long, multiple = true, number_of_values = 1)]
+    bin: Vec<String>,
+    /// Emit Rust dependencies for all binaries (with main defined)
+    #[clap(long)]
+    bins: bool,
 }
 
 fn main() {
@@ -33,6 +39,8 @@ fn main() {
     let fuzz_depends = args.fuzz_depends;
     let dependency_file = args.dependency_file;
     let dependency_dot = args.dependency_dot;
+    let emit_binaries = args.bin;
+    let emit_all_binaries = args.bins;
 
     // Read dependencies from the dependency file
     let dependency_infos = read_dependencies(&dependency_file).unwrap_or_else(|e| {
@@ -44,7 +52,36 @@ fn main() {
         process::exit(1);
     });
 
-    let dependency_graph = build_dependency(dependency_infos, fuzz_depends);
+    let mut bin_nodes = Vec::new();
+
+    if emit_all_binaries {
+        for (i, node) in dependency_infos.iter().enumerate() {
+            if node.defined.iter().any(|s| s.name == "main") {
+                bin_nodes.push(i);
+            }
+        }
+    } else if !emit_binaries.is_empty() {
+        for bin in emit_binaries {
+            for (i, node) in dependency_infos.iter().enumerate() {
+                if PathBuf::from(&node.output_path)
+                    .file_stem()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    == bin
+                    && node.defined.iter().any(|s| s.name == "main")
+                {
+                    bin_nodes.push(i);
+                }
+            }
+        }
+    }
+
+    let dependency_graph = if bin_nodes.is_empty() {
+        build_dependency(dependency_infos, fuzz_depends)
+    } else {
+        extract_sub_dependency_for(&build_dependency(dependency_infos, fuzz_depends), bin_nodes)
+    };
 
     // println!("Dependency Graph: {:#?}", dependency_graph);
 

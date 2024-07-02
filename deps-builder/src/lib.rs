@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DependencySymbol {
     pub name: String,
     pub path: String,
@@ -22,7 +22,7 @@ impl DependencySymbol {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DependencyInfo {
     pub input_path: String,
     pub output_path: String,
@@ -61,6 +61,12 @@ impl DependencyGraph {
         self.edges.push(Vec::new());
     }
 
+    pub fn add_edge(&mut self, from: usize, to: usize) {
+        assert!(from < self.nodes.len());
+        assert!(to < self.nodes.len());
+        self.edges[from].push(to);
+    }
+
     pub fn build_dependency_edges(&mut self, fuzz_depends: bool) {
         for (i, node) in self.nodes.iter().enumerate() {
             for symbol in &node.undefined {
@@ -95,4 +101,49 @@ pub fn build_dependency(
     dependency_graph.build_dependency_edges(fuzz_depends);
 
     dependency_graph
+}
+
+pub fn extract_sub_graph(dependency_graph: &DependencyGraph, nodes: &Vec<usize>) -> DependencyGraph {
+    let mut sub_dependency_graph = DependencyGraph::new();
+
+    for &node_index in nodes {
+        sub_dependency_graph.add_node(dependency_graph.nodes[node_index].clone());
+
+    }
+
+    for (i, &node_index) in nodes.iter().enumerate() {
+        for &next_node_index in &dependency_graph.edges[node_index] {
+            if nodes.contains(&next_node_index) {
+                sub_dependency_graph.add_edge(i, nodes.iter().position(|&x| x == next_node_index).unwrap());
+            }
+        }
+    }
+
+    sub_dependency_graph
+}
+
+pub fn extract_sub_dependency_for(
+    dependency_graph: &DependencyGraph,
+    nodes: Vec<usize>,
+) -> DependencyGraph {
+    let mut all_nodes = vec![];
+
+    let mut visited = vec![false; dependency_graph.nodes.len()];
+    let mut queue = nodes;
+
+    while !queue.is_empty() {
+        let current_node_index = queue.pop().unwrap();
+        if visited[current_node_index] {
+            continue;
+        }
+
+        visited[current_node_index] = true;
+        all_nodes.push(current_node_index);
+
+        for &next_node_index in &dependency_graph.edges[current_node_index] {
+            queue.push(next_node_index);
+        }
+    }
+
+    extract_sub_graph(dependency_graph, &all_nodes)
 }
