@@ -148,6 +148,10 @@ pub struct Args {
     #[clap(long)]
     emit_no_std: bool,
 
+    /// Emit only the binaries without library
+    #[clap(long)]
+    emit_no_lib: bool,
+
     /// Disable running refactoring tool after translation
     #[clap(long)]
     disable_refactoring: bool,
@@ -230,6 +234,7 @@ pub fn process_args(args: Args) -> (TranspilerConfig, PathBuf, Vec<String>) {
         panic_on_translator_failure: args.invalid_code == InvalidCodes::Panic,
         replace_unsupported_decls: ReplaceMode::Extern,
         emit_no_std: args.emit_no_std,
+        emit_no_lib: args.emit_no_lib,
         enabled_warnings: args.warn.into_iter().collect(),
         log_level: args.log_level,
         dependency_file: args.dependency_file,
