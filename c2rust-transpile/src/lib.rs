@@ -1,4 +1,5 @@
 #![allow(clippy::too_many_arguments)]
+#![feature(drain_filter)]
 
 mod diagnostics;
 
@@ -12,13 +13,14 @@ pub mod rust_ast;
 pub mod translator;
 pub mod with_stmts;
 
-use std::collections::HashSet;
+use std::collections::{binary_heap, HashSet};
 use std::fs::{self, File};
 use std::io;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::process;
 
+use build_files::get_lib;
 use failure::Error;
 use itertools::Itertools;
 use log::{info, warn};
@@ -87,6 +89,7 @@ pub struct TranspilerConfig {
     // Options that control build files
     /// Emit `Cargo.toml` and `lib.rs`
     pub emit_build_files: bool,
+    pub emit_binaries: bool,
     /// Names of translation units containing main functions that we should make
     /// into binaries
     pub binaries: Vec<String>,
@@ -303,8 +306,17 @@ pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]
             }
         }
 
-        let results = cmds
+        let pre_results = cmds
             .iter()
+            .filter(|cmd| {
+                !tcfg.is_binary(
+                    &(dependency_graph
+                        .nodes
+                        .iter()
+                        .find(|dep| dep.input_path == cmd.abs_file().to_str().unwrap())
+                        .unwrap()),
+                )
+            })
             .map(|cmd| {
                 transpile_single(
                     &tcfg,
@@ -315,9 +327,94 @@ pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]
                     cc_db,
                     &clang_args,
                     &dependency_graph,
+                    String::new(),
                 )
             })
-            .collect::<Vec<TranspileResult>>();
+            .collect::<Vec<_>>();
+        let results = cmds
+            .iter()
+            .filter(|cmd| {
+                tcfg.is_binary(
+                    &(dependency_graph
+                        .nodes
+                        .iter()
+                        .find(|dep| dep.input_path == cmd.abs_file().to_str().unwrap())
+                        .unwrap()),
+                )
+            })
+            .map(|cmd| {
+                let mut modules = vec![];
+                let mut modules_skipped = false;
+                let mut pragmas = PragmaSet::new();
+                let mut crates = CrateSet::new();
+                println!(
+                    "Getting sub dependency graph for {:?}",
+                    (
+                        Some(cmd.abs_file().to_str().unwrap_or_default().to_string()),
+                        cmd.abs_output_file()
+                            .as_ref()
+                            .map(|path| path.to_str().unwrap_or_default().to_string()),
+                    )
+                );
+                let sub_dependency_graph = if let Some(idx) = dependency_graph
+                    .get_node_index_with_input(
+                        &cmd.abs_file().to_str().unwrap().to_string(),
+                        &cmd.abs_output_file()
+                            .as_ref()
+                            .map(|path| path.to_str().unwrap().to_string()),
+                    ) {
+                    println!("Extracting sub dependency graph for {:?}", idx);
+                    dependency_graph.extract_sub_dependency(vec![idx])
+                } else {
+                    DependencyGraph::new()
+                };
+                for res in &pre_results {
+                    match res {
+                        Ok((module, pragma_vec, crate_set)) => {
+                            if let Some(_) = sub_dependency_graph
+                                .get_node_index_with_output(&module.to_str().unwrap().to_string())
+                            {
+                                modules.push(module.clone());
+                                crates.extend(crate_set);
+
+                                num_transpiled_files += 1;
+                                for (key, vals) in pragma_vec {
+                                    for val in vals {
+                                        pragmas.insert((key, val));
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            modules_skipped = true;
+                        }
+                    }
+                }
+                pragmas.sort();
+                crates.sort();
+                transpile_single(
+                    &tcfg,
+                    cmd.abs_file(),
+                    cmd.abs_output_file(),
+                    &ancestor_path,
+                    &build_dir,
+                    cc_db,
+                    &clang_args,
+                    &dependency_graph,
+                    get_lib(
+                        &tcfg,
+                        &build_dir,
+                        modules,
+                        pragmas,
+                        &crates,
+                        &dependency_graph,
+                    ),
+                )
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .chain(pre_results.into_iter())
+            .collect::<Vec<_>>();
         let mut modules = vec![];
         let mut modules_skipped = false;
         let mut pragmas = PragmaSet::new();
@@ -582,6 +679,7 @@ fn transpile_single(
     cc_db: &Path,
     extra_clang_args: &[&str],
     dependency_graph: &DependencyGraph,
+    binary_prefix: String,
 ) -> TranspileResult {
     let output_path = get_output_path(
         tcfg,
@@ -589,6 +687,13 @@ fn transpile_single(
         output_path,
         ancestor_path,
         build_dir,
+        tcfg.is_binary(
+            &(dependency_graph
+                .nodes
+                .iter()
+                .find(|dep| dep.input_path == input_path.to_str().unwrap())
+                .unwrap()),
+        ),
     );
     if output_path.exists() && !tcfg.overwrite_existing {
         warn!("Skipping existing file {}", output_path.display());
@@ -653,7 +758,7 @@ fn transpile_single(
     }
 
     // Perform the translation
-    let (translated_string, pragmas, crates) = translator::translate(
+    let (mut translated_string, pragmas, crates) = translator::translate(
         typed_context,
         tcfg,
         &input_path,
@@ -665,6 +770,18 @@ fn transpile_single(
                 .unwrap()),
         ),
     );
+
+    if tcfg.emit_binaries
+        && tcfg.is_binary(
+            &(dependency_graph
+                .nodes
+                .iter()
+                .find(|dep| dep.input_path == input_path.to_str().unwrap())
+                .unwrap()),
+        )
+    {
+        translated_string = binary_prefix + &translated_string;
+    }
 
     let mut file = match File::create(&output_path) {
         Ok(file) => file,
@@ -696,10 +813,10 @@ fn export_single(
     cc_db: &Path,
     extra_clang_args: &[&str],
 ) -> Result<DependencyInfo, ()> {
-    let output_path = get_output_path_raw(
+    let raw_output_path = get_output_path_raw(
         tcfg,
         input_path.clone(),
-        output_path,
+        &output_path,
         ancestor_path,
         build_dir,
     );
@@ -767,7 +884,10 @@ fn export_single(
 
     let mut dependency_info = DependencyInfo {
         input_path: input_path.to_str().unwrap().to_string(),
-        output_path: output_path.to_str().unwrap().to_string(),
+        output_path: raw_output_path.to_str().unwrap().to_string(),
+        object_path: output_path
+            .clone()
+            .map(|path| path.to_str().unwrap().to_string()),
         undefined: vec![],
         defined: vec![],
     };
@@ -840,6 +960,17 @@ fn export_single(
         }
     }
 
+    let output_path = get_output_path(
+        tcfg,
+        input_path.clone(),
+        output_path,
+        ancestor_path,
+        build_dir,
+        tcfg.is_binary(&dependency_info),
+    );
+
+    dependency_info.output_path = output_path.to_str().unwrap().to_string();
+
     Ok(dependency_info)
 }
 
@@ -849,6 +980,7 @@ fn get_output_path(
     output_path: Option<PathBuf>,
     ancestor_path: &Path,
     build_dir: &Path,
+    is_binary: bool,
 ) -> PathBuf {
     // When an output file name is not explictly specified, we should convert files
     // with dashes to underscores, as they are not allowed in rust file names.
@@ -872,11 +1004,18 @@ fn get_output_path(
 
         // Place the source files in build_dir/src/
         let mut output_path = build_dir.to_path_buf();
-        output_path.push("src");
-        for elem in path_buf.iter() {
+        if is_binary {
+            let elem = path_buf.iter().last().unwrap();
             let path = Path::new(elem);
             let name = get_module_name(path, false, true, false).unwrap();
             output_path.push(name);
+        } else {
+            output_path.push("src");
+            for elem in path_buf.iter() {
+                let path = Path::new(elem);
+                let name = get_module_name(path, false, true, false).unwrap();
+                output_path.push(name);
+            }
         }
 
         // Create the parent directory if it doesn't exist
@@ -895,14 +1034,14 @@ fn get_output_path(
 fn get_output_path_raw(
     tcfg: &TranspilerConfig,
     mut input_path: PathBuf,
-    output_path: Option<PathBuf>,
+    output_path: &Option<PathBuf>,
     ancestor_path: &Path,
     build_dir: &Path,
 ) -> PathBuf {
     // When an output file name is not explictly specified, we should convert files
     // with dashes to underscores, as they are not allowed in rust file names.
     if let Some(output_path) = output_path {
-        input_path = output_path;
+        input_path = output_path.clone();
     }
     let file_name = input_path
         .file_name()

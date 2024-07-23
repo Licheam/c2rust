@@ -100,6 +100,10 @@ pub struct Args {
     #[clap(short = 'e', long)]
     emit_build_files: bool,
 
+    /// Emit binary files in root dir for each binary target. Implies --emit-build-files.
+    #[clap(long, requires = "output-dir")]
+    emit_binaries: bool,
+
     /// Path to output directory. Rust sources will be emitted in DIR/src/ and build files will be emitted in DIR/.
     #[clap(short = 'o', long, value_name = "DIR")]
     output_dir: Option<PathBuf>,
@@ -219,6 +223,7 @@ pub fn process_args(args: Args) -> (TranspilerConfig, PathBuf, Vec<String>) {
         reorganize_definitions: args.reorganize_definitions,
         emit_modules: args.emit_modules,
         emit_build_files: args.emit_build_files,
+        emit_binaries: args.emit_binaries,
         output_dir: args.output_dir,
         binaries: args.binary.unwrap_or_default(),
         detect_binaries: args.detect_binary,
@@ -231,7 +236,7 @@ pub fn process_args(args: Args) -> (TranspilerConfig, PathBuf, Vec<String>) {
         fuzz_depends: args.fuzz_depends,
     };
     // binaries imply emit-build-files
-    if !tcfg.binaries.is_empty() || tcfg.detect_binaries {
+    if !tcfg.binaries.is_empty() || tcfg.detect_binaries || tcfg.emit_binaries {
         tcfg.emit_build_files = true
     };
     // emit-build-files implies emit-modules

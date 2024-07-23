@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use deps_builder::{build_dependency, extract_sub_dependency_for, read_dependencies};
+use deps_builder::{build_dependency, read_dependencies};
 
 #[derive(Debug, Parser)]
 #[clap(
@@ -80,7 +80,7 @@ fn main() {
     let dependency_graph = if bin_nodes.is_empty() {
         build_dependency(dependency_infos, fuzz_depends)
     } else {
-        extract_sub_dependency_for(&build_dependency(dependency_infos, fuzz_depends), bin_nodes)
+        build_dependency(dependency_infos, fuzz_depends).extract_sub_dependency(bin_nodes)
     };
 
     // println!("Dependency Graph: {:#?}", dependency_graph);

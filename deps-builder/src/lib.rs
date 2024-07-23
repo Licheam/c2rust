@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fs::File;
 use std::io::BufReader;
+use std::option;
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -26,6 +27,7 @@ impl DependencySymbol {
 pub struct DependencyInfo {
     pub input_path: String,
     pub output_path: String,
+    pub object_path: Option<String>,
     pub undefined: Vec<DependencySymbol>,
     pub defined: Vec<DependencySymbol>,
 }
@@ -79,6 +81,88 @@ impl DependencyGraph {
             }
         }
     }
+
+    pub fn get_node_index_with_input(&self, input_path: &String, object_path: &Option<String>) -> Option<usize> {
+        self.nodes.iter().position(|node| {
+            node.input_path == *input_path
+                && node.object_path == *object_path
+        })
+    }
+
+    pub fn get_node_index_with_output(&self, output_path: &String) -> Option<usize> {
+        self.nodes.iter().position(|node| {
+            node.output_path == *output_path
+        })
+    }
+
+    pub fn direct_depends_on(&self, from: usize, to: usize) -> bool {
+        self.edges[from].contains(&to)
+    }
+
+    pub fn depends_on(&self, from: usize, to: usize) -> bool {
+        let mut visited = vec![false; self.nodes.len()];
+        let mut queue = vec![from];
+
+        while !queue.is_empty() {
+            let current_node_index = queue.pop().unwrap();
+            if visited[current_node_index] {
+                continue;
+            }
+
+            visited[current_node_index] = true;
+            if current_node_index == to {
+                return true;
+            }
+
+            for &next_node_index in &self.edges[current_node_index] {
+                queue.push(next_node_index);
+            }
+        }
+
+        false
+    }
+
+    pub fn build_sub_graph(&self, nodes: &Vec<usize>) -> DependencyGraph {
+        let mut sub_dependency_graph = DependencyGraph::new();
+
+        for &node_index in nodes {
+            sub_dependency_graph.add_node(self.nodes[node_index].clone());
+        }
+
+        for (i, &node_index) in nodes.iter().enumerate() {
+            for &next_node_index in &self.edges[node_index] {
+                if nodes.contains(&next_node_index) {
+                    sub_dependency_graph
+                        .add_edge(i, nodes.iter().position(|&x| x == next_node_index).unwrap());
+                }
+            }
+        }
+
+        sub_dependency_graph
+    }
+
+    pub fn extract_sub_dependency(&self, nodes: Vec<usize>) -> DependencyGraph {
+        let mut all_nodes = vec![];
+
+        let mut visited = vec![false; self.nodes.len()];
+        let mut queue = nodes;
+
+        while !queue.is_empty() {
+            let current_node_index = queue.pop().unwrap();
+            if visited[current_node_index] {
+                continue;
+            }
+
+            visited[current_node_index] = true;
+            all_nodes.push(current_node_index);
+
+            for &next_node_index in &self.edges[current_node_index] {
+                queue.push(next_node_index);
+            }
+        }
+
+        self.build_sub_graph(&all_nodes)
+    }
 }
 
 pub fn read_dependencies(dependency_file: &Path) -> Result<Vec<DependencyInfo>, Box<dyn Error>> {
@@ -101,49 +185,4 @@ pub fn build_dependency(
     dependency_graph.build_dependency_edges(fuzz_depends);
 
     dependency_graph
-}
-
-pub fn extract_sub_graph(dependency_graph: &DependencyGraph, nodes: &Vec<usize>) -> DependencyGraph {
-    let mut sub_dependency_graph = DependencyGraph::new();
-
-    for &node_index in nodes {
-        sub_dependency_graph.add_node(dependency_graph.nodes[node_index].clone());
-
-    }
-
-    for (i, &node_index) in nodes.iter().enumerate() {
-        for &next_node_index in &dependency_graph.edges[node_index] {
-            if nodes.contains(&next_node_index) {
-                sub_dependency_graph.add_edge(i, nodes.iter().position(|&x| x == next_node_index).unwrap());
-            }
-        }
-    }
-
-    sub_dependency_graph
-}
-
-pub fn extract_sub_dependency_for(
-    dependency_graph: &DependencyGraph,
-    nodes: Vec<usize>,
-) -> DependencyGraph {
-    let mut all_nodes = vec![];
-
-    let mut visited = vec![false; dependency_graph.nodes.len()];
-    let mut queue = nodes;
-
-    while !queue.is_empty() {
-        let current_node_index = queue.pop().unwrap();
-        if visited[current_node_index] {
-            continue;
-        }
-
-        visited[current_node_index] = true;
-        all_nodes.push(current_node_index);
-
-        for &next_node_index in &dependency_graph.edges[current_node_index] {
-            queue.push(next_node_index);
-        }
-    }
-
-    extract_sub_graph(dependency_graph, &all_nodes)
 }

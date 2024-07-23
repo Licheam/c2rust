@@ -303,6 +303,40 @@ fn emit_lib_rs(
     maybe_write_to_file(&output_path, output, tcfg.overwrite_existing)
 }
 
+/// Get lib for binary. Returns `String`
+/// to the generated file or `None` if the output file exists.
+pub fn get_lib(
+    tcfg: &TranspilerConfig,
+    build_dir: &Path,
+    modules: Vec<PathBuf>,
+    pragmas: PragmaSet,
+    crates: &CrateSet,
+    dependency_graph: &DependencyGraph,
+) -> String {
+    let mut reg = Handlebars::new();
+    reg.register_template_string("lib.rs", include_str!("lib.rs.hbs")).unwrap();
+
+    let modules = convert_module_list(
+        tcfg,
+        build_dir,
+        modules,
+        ModuleSubset::Libraries,
+        &dependency_graph,
+    );
+    let crates = convert_dependencies_list(crates.clone());
+    let file_name = get_lib_rs_file_name(tcfg);
+    let json = json!({
+        "lib_rs_file": file_name,
+        "reorganize_definitions": tcfg.reorganize_definitions,
+        "translate_valist": tcfg.translate_valist,
+        "modules": modules,
+        "pragmas": pragmas,
+        "crates": crates,
+    });
+
+    reg.render("lib.rs", &json).unwrap()
+}
+
 /// If we translate variadic functions, the output will only compile
 /// on a nightly toolchain until the `c_variadics` feature is stable.
 fn emit_rust_toolchain(tcfg: &TranspilerConfig, build_dir: &Path) {
