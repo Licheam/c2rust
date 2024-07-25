@@ -1042,7 +1042,10 @@ fn make_submodule(
 fn arrange_header(t: &Translation, is_binary: bool) -> (Vec<syn::Attribute>, Vec<Box<Item>>) {
     let mut out_attrs = vec![];
     let mut out_items = vec![];
-    if (t.tcfg.emit_modules && !is_binary) || t.tcfg.emit_binaries {
+    if t.tcfg.emit_binaries {
+        return (out_attrs, out_items);
+    }
+    if t.tcfg.emit_modules && !is_binary {
         for c in t.extern_crates.borrow().iter() {
             out_items.push(mk().use_simple_item(
                 mk().abs_path(vec![ExternCrateDetails::from(*c).ident]),
