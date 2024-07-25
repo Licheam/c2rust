@@ -328,7 +328,7 @@ pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]
                     cc_db,
                     &clang_args,
                     &dependency_graph,
-                    String::new(),
+                    |_, _| "".to_string(),
                 )
             })
             .collect::<Vec<_>>();
@@ -345,7 +345,6 @@ pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]
             })
             .map(|cmd| {
                 let mut modules = vec![];
-                let mut modules_skipped = false;
                 let mut pragmas = PragmaSet::new();
                 let mut crates = CrateSet::new();
                 println!(
@@ -378,7 +377,6 @@ pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]
                                 modules.push(module.clone());
                                 crates.extend(crate_set);
 
-                                num_transpiled_files += 1;
                                 for (key, vals) in pragma_vec {
                                     for val in vals {
                                         pragmas.insert((key, val));
@@ -386,13 +384,9 @@ pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]
                                 }
                             }
                         }
-                        Err(_) => {
-                            modules_skipped = true;
-                        }
+                        Err(_) => {}
                     }
                 }
-                pragmas.sort();
-                crates.sort();
                 transpile_single(
                     &tcfg,
                     cmd.abs_file(),
@@ -402,14 +396,24 @@ pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]
                     cc_db,
                     &clang_args,
                     &dependency_graph,
-                    get_lib(
-                        &tcfg,
-                        &build_dir,
-                        modules,
-                        pragmas,
-                        &crates,
-                        &dependency_graph,
-                    ),
+                    |pragma_vec, crate_set| {
+                        crates.extend(crate_set);
+                        for (key, vals) in pragma_vec {
+                            for val in vals {
+                                pragmas.insert((key, val));
+                            }
+                        }
+                        pragmas.sort();
+                        crates.sort();
+                        get_lib(
+                            &tcfg,
+                            &build_dir,
+                            modules,
+                            pragmas,
+                            &crates,
+                            &dependency_graph,
+                        )
+                    },
                 )
             })
             .collect::<Vec<_>>()
@@ -680,7 +684,7 @@ fn transpile_single(
     cc_db: &Path,
     extra_clang_args: &[&str],
     dependency_graph: &DependencyGraph,
-    binary_prefix: String,
+    get_prefix: impl FnOnce(&PragmaVec, &CrateSet) -> String,
 ) -> TranspileResult {
     let output_path = get_output_path(
         tcfg,
@@ -781,7 +785,7 @@ fn transpile_single(
                 .unwrap()),
         )
     {
-        translated_string = binary_prefix + &translated_string;
+        translated_string = get_prefix(&pragmas, &crates) + &translated_string;
     }
 
     let mut file = match File::create(&output_path) {
