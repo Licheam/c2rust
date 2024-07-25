@@ -116,16 +116,20 @@ pub fn emit_build_files<'lcmd>(
         emit_rust_toolchain(tcfg, build_dir);
     }
     crate_cfg.and_then(|ccfg| {
-        emit_build_rs(tcfg, &reg, build_dir, ccfg.link_cmd);
-        emit_lib_rs(
-            tcfg,
-            &reg,
-            build_dir,
-            ccfg.modules,
-            ccfg.pragmas,
-            &ccfg.crates,
-            &dependency_graph,
-        )
+        if tcfg.emit_no_lib {
+            emit_build_rs(tcfg, &reg, build_dir, ccfg.link_cmd)
+        } else {
+            emit_build_rs(tcfg, &reg, build_dir, ccfg.link_cmd);
+            emit_lib_rs(
+                tcfg,
+                &reg,
+                build_dir,
+                ccfg.modules,
+                ccfg.pragmas,
+                &ccfg.crates,
+                &dependency_graph,
+            )
+        }
     })
 }
 
@@ -314,7 +318,8 @@ pub fn get_lib(
     dependency_graph: &DependencyGraph,
 ) -> String {
     let mut reg = Handlebars::new();
-    reg.register_template_string("lib.rs", include_str!("lib.rs.hbs")).unwrap();
+    reg.register_template_string("lib.rs", include_str!("lib.rs.hbs"))
+        .unwrap();
 
     let modules = convert_module_list(
         tcfg,
@@ -369,15 +374,26 @@ fn emit_cargo_toml<'lcmd>(
             dependency_graph,
         );
         let dependencies = convert_dependencies_list(ccfg.crates.clone());
-        let crate_json = json!({
-            "crate_name": ccfg.crate_name,
-            "crate_rust_name": ccfg.crate_name.replace('-', "_"),
-            "crate_types": ccfg.link_cmd.r#type.as_cargo_types(),
-            "is_library": ccfg.link_cmd.r#type.is_library(),
-            "lib_rs_file": get_lib_rs_file_name(tcfg),
-            "binaries": binaries,
-            "dependencies": dependencies,
-        });
+        let crate_json = if tcfg.emit_no_lib {
+            json!({
+                "crate_name": ccfg.crate_name,
+                "crate_rust_name": ccfg.crate_name.replace('-', "_"),
+                "crate_types": ccfg.link_cmd.r#type.as_cargo_types(),
+                "is_library": false,
+                "binaries": binaries,
+                "dependencies": dependencies,
+            })
+        } else {
+            json!({
+                "crate_name": ccfg.crate_name,
+                "crate_rust_name": ccfg.crate_name.replace('-', "_"),
+                "crate_types": ccfg.link_cmd.r#type.as_cargo_types(),
+                "is_library": ccfg.link_cmd.r#type.is_library(),
+                "lib_rs_file": get_lib_rs_file_name(tcfg),
+                "binaries": binaries,
+                "dependencies": dependencies,
+            })
+        };
         json.as_object_mut().unwrap().extend(
             crate_json
                 .as_object()
