@@ -109,23 +109,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "c2rust"
-version = "0.18.0"
-dependencies = [
- "anyhow",
- "c2rust-build-paths",
- "c2rust-transpile",
- "clap",
- "env_logger",
- "git-testament",
- "is_executable",
- "log",
- "regex",
- "shlex",
- "time-macros",
-]
-
-[[package]]
 name = "c2rust-ast-builder"
 version = "0.18.0"
 dependencies = [
@@ -379,6 +362,23 @@ name = "dtoa"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65d09067bfacaa79114679b279d7f5885b53295b1e2cfb4e79c8e4bd3d633169"
+
+[[package]]
+name = "ec2rust"
+version = "0.18.0"
+dependencies = [
+ "anyhow",
+ "c2rust-build-paths",
+ "c2rust-transpile",
+ "clap",
+ "env_logger",
+ "git-testament",
+ "is_executable",
+ "log",
+ "regex",
+ "shlex",
+ "time-macros",
+]
 
 [[package]]
 name = "either"

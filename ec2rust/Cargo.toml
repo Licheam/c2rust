@@ -1,5 +1,5 @@
 [package]
-name = "c2rust"
+name = "ec2rust"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -10,11 +10,11 @@ repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-default-run = "c2rust"
+default-run = "ec2rust"
 
 [badges]
-travis-ci = { repository = "immunant/c2rust" }
-azure-devops = { project = "immunant/c2rust", pipeline = "immunant.c2rust", build="1" }
+travis-ci = { repository = "licheam/c2rust" }
+azure-devops = { project = "licheam/c2rust", pipeline = "licheam.c2rust", build="1" }
 
 [dependencies]
 anyhow = "1.0"
