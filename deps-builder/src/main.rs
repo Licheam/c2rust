@@ -18,8 +18,8 @@ long_about = None,
 trailing_var_arg = true)]
 struct Args {
     /// Use fuzzing dependency checking
-    #[clap(long)]
-    fuzz_depends: bool,
+    #[clap(long, default_value_t = 0)]
+    fuzz_depends_level: usize,
     /// Path to a file to with the dependency information
     #[clap(long, default_value = "./dependencies.json")]
     dependency_file: PathBuf,
@@ -36,7 +36,7 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    let fuzz_depends = args.fuzz_depends;
+    let fuzz_depends_level = args.fuzz_depends_level;
     let dependency_file = args.dependency_file;
     let dependency_dot = args.dependency_dot;
     let emit_binaries = args.bin;
@@ -78,9 +78,9 @@ fn main() {
     }
 
     let dependency_graph = if bin_nodes.is_empty() {
-        build_dependency(dependency_infos, fuzz_depends)
+        build_dependency(dependency_infos, fuzz_depends_level)
     } else {
-        build_dependency(dependency_infos, fuzz_depends).extract_sub_dependency(bin_nodes)
+        build_dependency(dependency_infos, fuzz_depends_level).extract_sub_dependency(bin_nodes)
     };
 
     // println!("Dependency Graph: {:#?}", dependency_graph);

@@ -172,9 +172,9 @@ pub struct Args {
     #[clap(long, default_value = "./dependencies.json")]
     dependency_file: PathBuf,
 
-    /// Use fuzz dependency checking
-    #[clap(long)]
-    fuzz_depends: bool,
+    /// Fuzz dependency checking level
+    #[clap(long, default_value_t = 0)]
+    fuzz_depends_level: usize,
 }
 
 #[derive(Debug, PartialEq, Eq, ValueEnum, Clone)]
@@ -238,7 +238,7 @@ pub fn process_args(args: Args) -> (TranspilerConfig, PathBuf, Vec<String>) {
         enabled_warnings: args.warn.into_iter().collect(),
         log_level: args.log_level,
         dependency_file: args.dependency_file,
-        fuzz_depends: args.fuzz_depends,
+        fuzz_depends_level: args.fuzz_depends_level,
     };
     // binaries imply emit-build-files
     if !tcfg.binaries.is_empty() || tcfg.detect_binaries || tcfg.emit_binaries {

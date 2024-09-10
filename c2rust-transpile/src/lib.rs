@@ -96,7 +96,7 @@ pub struct TranspilerConfig {
     pub binaries: Vec<String>,
     pub detect_binaries: bool,
     pub dependency_file: PathBuf,
-    pub fuzz_depends: bool,
+    pub fuzz_depends_level: usize,
 }
 
 impl TranspilerConfig {
@@ -244,7 +244,7 @@ fn get_module_name(
 /// clap::App::get_matches().
 pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
     let dependency_infos = export(tcfg.clone(), cc_db, extra_clang_args);
-    let dependency_graph = build_dependency(dependency_infos, tcfg.fuzz_depends);
+    let dependency_graph = build_dependency(dependency_infos, tcfg.fuzz_depends_level);
 
     diagnostics::init(tcfg.enabled_warnings.clone(), tcfg.log_level);
 

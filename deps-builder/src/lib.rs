@@ -12,13 +12,21 @@ pub struct DependencySymbol {
 }
 
 impl DependencySymbol {
-    pub fn depends_on(&self, other: &Self, fuzz_depends: bool) -> bool {
-        if fuzz_depends {
-            self.name == other.name
-                && Path::new(&self.path).parent() == Path::new(&other.path).parent()
-                && Path::new(&self.path).file_stem() == Path::new(&other.path).file_stem()
-        } else {
-            self == other
+    pub fn depends_on(&self, other: &Self, fuzz_depends_level: usize) -> bool {
+        match fuzz_depends_level {
+            0 => false,
+            1 => self == other,
+            2 => {
+                self.name == other.name
+                    && Path::new(&self.path).parent() == Path::new(&other.path).parent()
+                    && Path::new(&self.path).file_stem() == Path::new(&other.path).file_stem()
+            }
+            3 => {
+                self.name == other.name
+                    && Path::new(&self.path).parent() == Path::new(&other.path).parent()
+            }
+            4 => self.name == other.name,
+            _ => true,
         }
     }
 }
@@ -69,11 +77,14 @@ impl DependencyGraph {
         self.edges[from].push(to);
     }
 
-    pub fn build_dependency_edges(&mut self, fuzz_depends: bool) {
+    pub fn build_dependency_edges(&mut self, fuzz_depends_level: usize) {
         for (i, node) in self.nodes.iter().enumerate() {
             for symbol in &node.undefined {
                 self.nodes.iter().enumerate().for_each(|(j, n)| {
-                    if !n.is_main() && n.defined.iter().any(|s| s.depends_on(symbol, fuzz_depends))
+                    if !n.is_main()
+                        && n.defined
+                            .iter()
+                            .any(|s| s.depends_on(symbol, fuzz_depends_level))
                     {
                         self.edges[i].push(j);
                     }
@@ -82,17 +93,20 @@ impl DependencyGraph {
         }
     }
 
-    pub fn get_node_index_with_input(&self, input_path: &String, object_path: &Option<String>) -> Option<usize> {
-        self.nodes.iter().position(|node| {
-            node.input_path == *input_path
-                && node.object_path == *object_path
-        })
+    pub fn get_node_index_with_input(
+        &self,
+        input_path: &String,
+        object_path: &Option<String>,
+    ) -> Option<usize> {
+        self.nodes
+            .iter()
+            .position(|node| node.input_path == *input_path && node.object_path == *object_path)
     }
 
     pub fn get_node_index_with_output(&self, output_path: &String) -> Option<usize> {
-        self.nodes.iter().position(|node| {
-            node.output_path == *output_path
-        })
+        self.nodes
+            .iter()
+            .position(|node| node.output_path == *output_path)
     }
 
     pub fn direct_depends_on(&self, from: usize, to: usize) -> bool {
@@ -174,7 +188,7 @@ pub fn read_dependencies(dependency_file: &Path) -> Result<Vec<DependencyInfo>, 
 
 pub fn build_dependency(
     dependency_infos: Vec<DependencyInfo>,
-    fuzz_depends: bool,
+    fuzz_depends_level: usize,
 ) -> DependencyGraph {
     let mut dependency_graph = DependencyGraph::new();
 
@@ -182,7 +196,7 @@ pub fn build_dependency(
         dependency_graph.add_node(dependency);
     });
 
-    dependency_graph.build_dependency_edges(fuzz_depends);
+    dependency_graph.build_dependency_edges(fuzz_depends_level);
 
     dependency_graph
 }
