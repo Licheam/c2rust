@@ -14,18 +14,17 @@ pub struct DependencySymbol {
 impl DependencySymbol {
     pub fn depends_on(&self, other: &Self, fuzz_depends_level: usize) -> bool {
         match fuzz_depends_level {
-            0 => false,
-            1 => self == other,
-            2 => {
+            0 => self == other,
+            1 => {
                 self.name == other.name
                     && Path::new(&self.path).parent() == Path::new(&other.path).parent()
                     && Path::new(&self.path).file_stem() == Path::new(&other.path).file_stem()
             }
-            3 => {
+            2 => {
                 self.name == other.name
                     && Path::new(&self.path).parent() == Path::new(&other.path).parent()
             }
-            4 => self.name == other.name,
+            3 => self.name == other.name,
             _ => true,
         }
     }
